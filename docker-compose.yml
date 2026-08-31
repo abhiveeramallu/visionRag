@@ -1,0 +1,104 @@
+# =============================================================================
+# VisionRAG-X — Docker Compose
+# =============================================================================
+
+networks:
+  visionrag_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  qdrant_data:
+
+services:
+  # ---------------------------------------------------------------------------
+  # Backend — FastAPI application
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: visionrag_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override DB/vector URLs to use Docker service names
+      POSTGRES_URL: postgresql+asyncpg://visionrag:visionrag@postgres:5432/visionrag_x
+      POSTGRES_SYNC_URL: postgresql://visionrag:visionrag@postgres:5432/visionrag_x
+      QDRANT_URL: http://qdrant:6333
+    volumes:
+      - ./data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - visionrag_network
+
+  # ---------------------------------------------------------------------------
+  # Frontend — React / Vite served via Nginx
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: visionrag_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - visionrag_network
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — metadata & document store
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15
+    container_name: visionrag_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: visionrag
+      POSTGRES_PASSWORD: visionrag
+      POSTGRES_DB: visionrag_x
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U visionrag -d visionrag_x"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - visionrag_network
+
+  # ---------------------------------------------------------------------------
+  # Qdrant — vector database
+  # ---------------------------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: visionrag_qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # HTTP / REST
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    networks:
+      - visionrag_network

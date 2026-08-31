@@ -1,0 +1,57 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+pydantic==2.7.1
+pydantic-settings==2.3.0
+python-multipart==0.0.9
+aiofiles==23.2.1
+httpx==0.27.0
+python-dotenv==1.0.1
+
+# Database
+sqlalchemy[asyncio]==2.0.30
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+alembic==1.13.1
+
+# Qdrant
+qdrant-client==1.9.1
+
+# Embeddings
+sentence-transformers==3.0.1
+transformers==4.39.3
+
+# Video/Audio Processing
+yt-dlp==2024.5.27
+ffmpeg-python==0.2.0
+opencv-python-headless==4.9.0.80
+
+# OCR
+paddlepaddle==2.6.2
+paddleocr==2.7.3
+
+# ASR
+whisperx==3.1.1
+av>=13.0.0
+
+# Documents
+pymupdf==1.24.3
+python-pptx==0.6.23
+Pillow==10.3.0
+
+# LLM
+openai==1.30.1
+google-generativeai==0.7.2
+
+# Knowledge Graph
+networkx==3.3
+
+# Search
+rank-bm25==0.2.2
+
+# Utilities
+numpy==1.26.4
+pandas==2.2.2
+
+# Testing
+pytest==8.2.2
+pytest-asyncio==0.23.7

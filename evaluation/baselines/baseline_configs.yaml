@@ -1,0 +1,147 @@
+# =============================================================================
+# VisionRAG-X — Baseline System Configurations
+# evaluation/baselines/baseline_configs.yaml
+# =============================================================================
+#
+# Four baseline systems are defined here, from the simplest (asr_only) to
+# the full VisionRAG-X system.  These configs drive the evaluation harness
+# in evaluation/run_baselines.py (to be implemented).
+#
+# Schema per entry:
+#   name                : short identifier (used as a key in result tables)
+#   description         : human-readable summary
+#   components          : dict of component flags (true = enabled)
+#   retrieval_strategy  : description of how retrieval is performed
+#   expected_strengths  : list of anticipated advantages
+#   expected_weaknesses : list of anticipated limitations
+#
+# NOTE: "expected_*" fields are research hypotheses, not measured results.
+# =============================================================================
+
+baselines:
+
+  # ---------------------------------------------------------------------------
+  # Baseline 1 — ASR Only
+  # ---------------------------------------------------------------------------
+  - name: asr_only
+    description: >
+      Text-only retrieval-augmented generation using Whisper automatic speech
+      recognition transcripts.  No visual or document modalities are used.
+      Represents the simplest possible pipeline: audio → text → embed → retrieve → generate.
+    components:
+      asr: true
+      ocr: false
+      vision: false
+      conflict_detection: false
+      vkeg: false
+      hybrid_indexing: false   # dense-only (BM25 disabled, visual disabled)
+      dynamic_routing: false
+    retrieval_strategy: >
+      Dense retrieval only (BGE embeddings) over ASR chunk index.
+      Top-K chunks by cosine similarity are passed to the LLM.
+    expected_strengths:
+      - Fast inference; minimal compute requirements
+      - Adequate for queries that are fully answered by spoken content
+      - Low setup complexity — no FFmpeg frame extraction or OCR needed
+    expected_weaknesses:
+      - Cannot answer questions that require reading slides, diagrams, or PDFs
+      - No keyword/lexical retrieval; fails on out-of-vocabulary terminology
+      - No conflict awareness; silently merges contradictory transcripts
+      - No provenance linking to video timestamps in a multimodal sense
+
+  # ---------------------------------------------------------------------------
+  # Baseline 2 — ASR + OCR
+  # ---------------------------------------------------------------------------
+  - name: asr_ocr
+    description: >
+      Combines Whisper ASR transcripts with OCR-extracted text from video frames
+      and PDF documents.  Visual frame captioning, entity graphs, conflict
+      detection, and dynamic routing are all disabled.
+    components:
+      asr: true
+      ocr: true
+      vision: false
+      conflict_detection: false
+      vkeg: false
+      hybrid_indexing: false   # dense-only; BM25 disabled
+      dynamic_routing: false
+    retrieval_strategy: >
+      Dense retrieval (BGE embeddings) over a unified index of ASR + OCR text
+      chunks.  Chunks from both modalities are pooled and ranked by cosine
+      similarity.  No score fusion or modality weighting is applied.
+    expected_strengths:
+      - Handles text visible in slides and PDF pages
+      - Better coverage for formula-heavy or definition-heavy content
+      - Cheap to compute — no vision encoder inference required
+    expected_weaknesses:
+      - OCR errors on low-resolution frames can inject noise
+      - No visual understanding of diagrams or charts
+      - No conflict detection when OCR text contradicts the transcript
+      - No graph-based multi-hop retrieval
+
+  # ---------------------------------------------------------------------------
+  # Baseline 3 — Standard Multimodal
+  # ---------------------------------------------------------------------------
+  - name: standard_multimodal
+    description: >
+      Full multimodal ingestion (ASR + OCR + vision frame captioning) with
+      hybrid indexing (dense + sparse).  Ablates the Visual Knowledge Entity
+      Graph (VKEG), cross-source conflict detection, and the dynamic query
+      router — the three novel components of VisionRAG-X.
+    components:
+      asr: true
+      ocr: true
+      vision: true
+      conflict_detection: false
+      vkeg: false
+      hybrid_indexing: true    # dense (BGE) + sparse (BM25); visual disabled
+      dynamic_routing: false
+    retrieval_strategy: >
+      Hybrid retrieval: weighted combination of dense (α=0.7) and sparse/BM25
+      (β=0.3) scores over the joint ASR + OCR + vision-caption index.
+      Visual embedding similarity is not used.  All modality shards are queried
+      uniformly — no routing.
+    expected_strengths:
+      - Broad multimodal coverage of spoken, textual, and visual content
+      - BM25 improves recall for technical terminology and proper nouns
+      - Vision captions provide context for diagrams and charts
+    expected_weaknesses:
+      - No conflict surfacing — contradictions between sources are hidden
+      - No graph-based entity linking across modalities
+      - Querying all shards uniformly may introduce noise for narrow queries
+      - Retrieval weights are fixed; cannot adapt to query type
+
+  # ---------------------------------------------------------------------------
+  # Baseline 4 — VisionRAG-X (Full System)
+  # ---------------------------------------------------------------------------
+  - name: visionrag_x
+    description: >
+      The complete VisionRAG-X system with all six novel components enabled:
+      ASR, OCR, vision frame captioning, Visual Knowledge Entity Graph (VKEG),
+      cross-source conflict detection, hybrid indexing (dense + sparse + visual),
+      and dynamic query routing.
+    components:
+      asr: true
+      ocr: true
+      vision: true
+      conflict_detection: true
+      vkeg: true
+      hybrid_indexing: true    # dense (BGE) + sparse (BM25) + visual (CLIP)
+      dynamic_routing: true
+    retrieval_strategy: >
+      Three-way hybrid retrieval with configurable weights (α=RETRIEVAL_ALPHA,
+      β=RETRIEVAL_BETA, γ=RETRIEVAL_GAMMA from .env).  The dynamic router
+      classifies each query as text-centric, visual-centric, or mixed and
+      adjusts the active index shards accordingly.  Retrieved chunks are
+      post-processed by the conflict detector before being passed to the LLM.
+    expected_strengths:
+      - Handles the full range of query types (audio, visual, textual, hybrid)
+      - Surfaces source conflicts so the LLM can reason about them explicitly
+      - VKEG enables multi-hop entity-centric retrieval
+      - Provenance-anchored citations with video timestamps
+      - Configurable retrieval weights support domain-specific tuning
+    expected_weaknesses:
+      - Higher compute cost at ingestion time (vision encoder, VKEG construction)
+      - Conflict detection adds latency at query time
+      - Dynamic router may misclassify edge-case query types
+      - More hyperparameters (α, β, γ, conflict threshold) to tune

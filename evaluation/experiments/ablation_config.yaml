@@ -1,0 +1,166 @@
+# =============================================================================
+# VisionRAG-X — Ablation Study Configurations
+# evaluation/experiments/ablation_config.yaml
+# =============================================================================
+#
+# Seven ablation studies (A–G) are defined here.  Each study starts from the
+# full VisionRAG-X system and disables exactly one component (or set of
+# closely related sub-components) to isolate its contribution.
+#
+# Schema per entry:
+#   id                  : single uppercase letter (A–G)
+#   name                : short camelCase identifier
+#   description         : what is being removed and why it matters
+#   base_config         : always "visionrag_x" (full system)
+#   disable             : list of component keys to disable
+#   hypothesised_impact : research hypothesis about the expected degradation
+#
+# All "hypothesised_impact" fields are research hypotheses, NOT measured results.
+# =============================================================================
+
+ablations:
+
+  # ---------------------------------------------------------------------------
+  # Ablation A — Remove ASR (automatic speech recognition)
+  # ---------------------------------------------------------------------------
+  - id: A
+    name: no_asr
+    description: >
+      Disables Whisper ASR transcription entirely.  The system relies only on
+      OCR-extracted text and vision frame captions for retrieval.  This ablation
+      isolates the contribution of spoken-language understanding to the pipeline.
+    base_config: visionrag_x
+    disable:
+      - asr
+    hypothesised_impact: >
+      Severe degradation on queries whose answers are spoken but not written
+      on slides (e.g., verbal explanations, off-slide commentary, worked
+      examples narrated aloud).  Document-centric queries may be largely
+      unaffected.  We expect a large drop in Recall@K and NDCG@K on
+      audio-centric query subsets.
+
+  # ---------------------------------------------------------------------------
+  # Ablation B — Remove OCR (optical character recognition)
+  # ---------------------------------------------------------------------------
+  - id: B
+    name: no_ocr
+    description: >
+      Disables OCR text extraction from video frames and PDFs.  The system
+      uses only ASR transcripts and vision frame captions.  This ablation
+      isolates the contribution of on-screen text to retrieval quality.
+    base_config: visionrag_x
+    disable:
+      - ocr
+    hypothesised_impact: >
+      Moderate to severe degradation on queries that require reading slide
+      text, equation labels, code listings, or PDF body text verbatim.
+      ASR may partially compensate if the speaker reads slide content aloud,
+      but this is unreliable.  Expect degraded Precision@K on
+      document-heavy test queries.
+
+  # ---------------------------------------------------------------------------
+  # Ablation C — Remove Vision Frame Captioning
+  # ---------------------------------------------------------------------------
+  - id: C
+    name: no_vision
+    description: >
+      Disables vision encoder inference and frame captioning.  Frames are
+      extracted but not processed by a vision-language model.  The system
+      uses ASR + OCR only.  This ablation isolates the contribution of
+      visual semantic understanding (diagram interpretation, chart reading).
+    base_config: visionrag_x
+    disable:
+      - vision
+    hypothesised_impact: >
+      Minimal effect on text-only and formula queries that are well-covered
+      by ASR and OCR.  Significant degradation expected on queries that
+      require understanding of diagrams, flow charts, bar graphs, or images
+      that contain no readable text.  Visual-CLIP retrieval score (γ)
+      becomes zero; hybrid weights effectively reduce to α-β fusion.
+
+  # ---------------------------------------------------------------------------
+  # Ablation D — Remove Conflict Detection
+  # ---------------------------------------------------------------------------
+  - id: D
+    name: no_conflict_detection
+    description: >
+      Disables the cross-source conflict detector.  Retrieved chunks from
+      multiple sources are passed to the LLM without any conflict annotation.
+      This ablation isolates the impact of explicit conflict awareness on
+      answer trustworthiness and user transparency.
+    base_config: visionrag_x
+    disable:
+      - conflict_detection
+    hypothesised_impact: >
+      Retrieval metrics (Recall@K, NDCG@K) should be largely unchanged since
+      the retriever is unaffected.  Answer quality metrics may degrade on
+      conflicting-source queries: the LLM may silently blend contradictory
+      information without signalling uncertainty.  Hallucination rate heuristic
+      may increase on conflict-heavy test cases.  Citation accuracy may also
+      drop if the model cites the wrong source when two sources disagree.
+
+  # ---------------------------------------------------------------------------
+  # Ablation E — Remove Visual Knowledge Entity Graph (VKEG)
+  # ---------------------------------------------------------------------------
+  - id: E
+    name: no_vkeg
+    description: >
+      Disables the Visual Knowledge Entity Graph construction and graph-based
+      retrieval augmentation.  Entities are still extracted from chunks but
+      no graph edges are built and no graph traversal is performed at query
+      time.  This ablation isolates the contribution of structured relational
+      knowledge to multi-hop retrieval.
+    base_config: visionrag_x
+    disable:
+      - vkeg
+    hypothesised_impact: >
+      Negligible effect on single-hop factual queries.  Moderate to large
+      degradation expected on multi-hop queries that require linking entities
+      across documents or modalities (e.g., "How does concept X introduced
+      in the lecture relate to definition Y in the PDF?").  MRR may be more
+      sensitive than Recall@K because graph traversal tends to surface the
+      single most-relevant chunk early in the ranked list.
+
+  # ---------------------------------------------------------------------------
+  # Ablation F — Remove Hybrid Indexing (dense + sparse + visual fusion)
+  # ---------------------------------------------------------------------------
+  - id: F
+    name: no_hybrid_indexing
+    description: >
+      Reverts to dense-only retrieval (BGE semantic embeddings).  BM25 sparse
+      retrieval and CLIP visual similarity scores are disabled.  Retrieval
+      weights β and γ are set to 0; only the dense score (α) is used.  This
+      ablation isolates the contribution of lexical and visual signals to
+      retrieval quality.
+    base_config: visionrag_x
+    disable:
+      - hybrid_indexing    # sets beta=0, gamma=0; dense-only
+    hypothesised_impact: >
+      Degraded recall on queries containing rare technical terms, proper nouns,
+      or acronyms where semantic embeddings may not capture exact lexical
+      matches (BM25 contribution).  Degraded performance on purely visual
+      queries such as "show me the slide with the red-highlighted formula"
+      (CLIP contribution).  Dense-only retrieval may over-generalise and
+      return semantically similar but lexically divergent chunks.
+
+  # ---------------------------------------------------------------------------
+  # Ablation G — Remove Dynamic Query Router
+  # ---------------------------------------------------------------------------
+  - id: G
+    name: no_dynamic_routing
+    description: >
+      Disables the lightweight query classifier that selects which index
+      shards (ASR, OCR, vision) to activate for each query.  All shards are
+      queried uniformly for every request, regardless of query type.
+      This ablation isolates the efficiency and precision contribution of
+      modality-aware routing.
+    base_config: visionrag_x
+    disable:
+      - dynamic_routing
+    hypothesised_impact: >
+      Higher average query latency due to querying all shards unconditionally.
+      Potential precision degradation from introducing noisy cross-modality
+      results: a text-only question may retrieve unrelated vision chunks,
+      diluting the top-K.  No degradation expected on queries that genuinely
+      require all modalities.  Overall Precision@K may drop while Recall@K
+      remains stable or improves slightly due to wider search.

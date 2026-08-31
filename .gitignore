@@ -1,0 +1,236 @@
+# =============================================================================
+# VisionRAG-X .gitignore
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+htmlcov/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ---------------------------------------------------------------------------
+# Node.js / Frontend
+# ---------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Build output
+dist/
+build/
+out/
+.next/
+.nuxt/
+
+# Cache
+.npm
+.eslintcache
+.stylelintcache
+.parcel-cache
+.cache/
+
+# Environment variable files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# TypeScript
+*.tsbuildinfo
+
+# Yarn Integrity file
+.yarn-integrity
+
+# Storybook build outputs
+storybook-static/
+
+# ---------------------------------------------------------------------------
+# Data directories — keep .gitkeep placeholder files
+# ---------------------------------------------------------------------------
+data/uploads/*
+!data/uploads/.gitkeep
+
+data/processed/*
+!data/processed/.gitkeep
+
+data/frames/*
+!data/frames/.gitkeep
+
+data/transcripts/*
+!data/transcripts/.gitkeep
+
+# ---------------------------------------------------------------------------
+# Media files
+# ---------------------------------------------------------------------------
+*.mp4
+*.mp3
+*.wav
+*.mkv
+*.avi
+*.mov
+*.flv
+*.wmv
+*.webm
+*.ogg
+*.m4a
+*.m4v
+*.aac
+*.flac
+
+# ---------------------------------------------------------------------------
+# Secrets / configuration
+# ---------------------------------------------------------------------------
+.env
+*.env
+!.env.example
+secrets/
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+
+# ---------------------------------------------------------------------------
+# Editors & IDEs
+# ---------------------------------------------------------------------------
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---------------------------------------------------------------------------
+# Jupyter Notebooks
+# ---------------------------------------------------------------------------
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+*.log
+logs/
+!logs/.gitkeep
+
+# ---------------------------------------------------------------------------
+# Databases (local dev)
+# ---------------------------------------------------------------------------
+*.sqlite
+*.sqlite3
+*.db
+
+# ---------------------------------------------------------------------------
+# ML / Model artefacts
+# ---------------------------------------------------------------------------
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+models/
+checkpoints/
+!models/.gitkeep
+
+# ---------------------------------------------------------------------------
+# Evaluation outputs
+# ---------------------------------------------------------------------------
+evaluation/results/
+evaluation/outputs/
+!evaluation/results/.gitkeep
+
+# ---------------------------------------------------------------------------
+# Miscellaneous
+# ---------------------------------------------------------------------------
+*.bak
+*.tmp
+*.temp
