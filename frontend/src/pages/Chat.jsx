@@ -64,7 +64,7 @@ export default function Chat() {
         content: res.answer,
         evidence: res.evidence || [],
         conflicts: res.conflicts || [],
-        confidence: res.confidence || 0.8,
+        confidence: res.confidence ?? 0.8,
         strategy: res.retrieval_strategy_used,
       }
       setMessages((prev) => [...prev, botMsg])

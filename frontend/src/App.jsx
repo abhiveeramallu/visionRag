@@ -17,7 +17,6 @@ import Quiz from './pages/Quiz'
 import Flashcards from './pages/Flashcards'
 import Notes from './pages/Notes'
 import Search from './pages/Search'
-import Settings from './pages/Settings'
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -53,7 +52,6 @@ function App() {
             <Route path="/notes" element={<Notes />} />
             <Route path="/notes/:sourceId" element={<Notes />} />
             <Route path="/search" element={<Search />} />
-            <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>
       </div>

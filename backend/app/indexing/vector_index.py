@@ -2,11 +2,17 @@
 Vector index using sentence-transformers + Qdrant for VisionRAG-X.
 Embedding model is fully configurable via EMBEDDING_MODEL env var.
 """
+import asyncio
 import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Process-wide cache keyed by "model_name:device" — a fresh VectorIndex is
+# instantiated on every request (see app/api/query.py), so without this the
+# ~440MB embedding model was being reloaded from disk on every single query.
+_MODEL_CACHE: Dict[str, Any] = {}
 
 
 class ConfigurationError(Exception):
@@ -51,34 +57,30 @@ class VectorIndex:
                 'sentence-transformers is not installed. '
                 'Install with: pip install sentence-transformers torch'
             )
-        if self._model is None:
+        if self._model is not None:
+            return
+
+        model_name = self.settings.embedding_model
+        device = self.settings.embedding_device
+        cache_key = f'{model_name}:{device}'
+
+        if cache_key not in _MODEL_CACHE:
             from sentence_transformers import SentenceTransformer
-            model_name = self.settings.embedding_model
-            device = self.settings.embedding_device
             logger.info('Loading embedding model: %s on %s', model_name, device)
-            self._model = SentenceTransformer(model_name, device=device)
+            model = SentenceTransformer(model_name, device=device)
             # Detect vector size from a test encode
-            test_vec = self._model.encode(['test'])
-            self._vector_size = len(test_vec[0])
-            logger.info('Embedding model loaded. Vector size: %d', self._vector_size)
+            test_vec = model.encode(['test'])
+            _MODEL_CACHE[cache_key] = (model, len(test_vec[0]))
+            logger.info('Embedding model loaded. Vector size: %d', len(test_vec[0]))
+
+        self._model, self._vector_size = _MODEL_CACHE[cache_key]
 
     # ------------------------------------------------------------------
     # Embedding
     # ------------------------------------------------------------------
 
-    def embed(self, texts: List[str]) -> List[List[float]]:
-        """
-        Encode a list of texts into embedding vectors.
-
-        Parameters
-        ----------
-        texts : list of str
-            Texts to encode.
-
-        Returns
-        -------
-        List of embedding vectors (list of floats).
-        """
+    def _embed_sync(self, texts: List[str]) -> List[List[float]]:
+        """Blocking implementation — always call via embed(), never directly from async code."""
         self._load_model()
         if not texts:
             return []
@@ -89,6 +91,27 @@ class VectorIndex:
             vecs = self._model.encode(batch, show_progress_bar=False, normalize_embeddings=True)
             all_embeddings.extend(vecs.tolist())
         return all_embeddings
+
+    async def embed(self, texts: List[str]) -> List[List[float]]:
+        """
+        Encode a list of texts into embedding vectors.
+
+        Runs the (CPU-bound, synchronous) model load + encode in a thread
+        executor so it never blocks the asyncio event loop — otherwise a
+        cold model load or a large batch freezes every other in-flight
+        request (health checks, other users' queries) for its duration.
+
+        Parameters
+        ----------
+        texts : list of str
+            Texts to encode.
+
+        Returns
+        -------
+        List of embedding vectors (list of floats).
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._embed_sync, texts)
 
     # ------------------------------------------------------------------
     # Indexing
@@ -104,7 +127,7 @@ class VectorIndex:
         if not units:
             return
         texts = [u.get('content', '') for u in units]
-        embeddings = self.embed(texts)
+        embeddings = await self.embed(texts)
 
         from qdrant_client.models import PointStruct
         points: List[PointStruct] = []
@@ -148,7 +171,7 @@ class VectorIndex:
 
         Returns list of dicts: {unit_id, score, payload}.
         """
-        query_vec = self.embed([query])[0]
+        query_vec = (await self.embed([query]))[0]
         results = await self.qdrant.search(
             query_vector=query_vec,
             source_id_filter=source_id,

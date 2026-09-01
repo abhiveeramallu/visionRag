@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom'
 import { generateFlashcards, getSources } from '../services/api'
 import FlashCard from '../components/FlashCard'
 import { Layers, Loader2, Sparkles, Download, Shuffle } from 'lucide-react'
+import SourceSelect from '../components/SourceSelect'
+import GenerationNotice from '../components/GenerationNotice'
 
 export default function Flashcards() {
   const { sourceId } = useParams()
@@ -12,23 +14,29 @@ export default function Flashcards() {
   const [loading, setLoading] = useState(false)
   const [currentIndex, setCurrentIndex] = useState(0)
 
+  const [sources, setSources] = useState([])
   const [activeSourceId, setActiveSourceId] = useState(sourceId || null)
 
   useEffect(() => {
-    if (sourceId) {
-      setActiveSourceId(sourceId)
-    } else {
-      getSources()
-        .then((sources) => {
-          const completed = sources.find((s) => s.status === 'completed') || sources[0]
-          if (completed) setActiveSourceId(completed.id)
-        })
-        .catch(() => {})
-    }
+    getSources()
+      .then((data) => {
+        const done = (data || []).filter((s) => s.status === 'completed')
+        setSources(done)
+        if (!sourceId && !activeSourceId && done.length > 0) {
+          setActiveSourceId(done[0].id)
+        }
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceId])
 
+  const handleSourceChange = (id) => {
+    setActiveSourceId(id)
+    setCardsData(null)
+  }
+
   const handleGenerate = async () => {
-    const targetId = sourceId || activeSourceId
+    const targetId = activeSourceId
     if (!targetId) return
     setLoading(true)
     setCurrentIndex(0)
@@ -105,7 +113,9 @@ export default function Flashcards() {
 
       {/* Config Panel */}
       <div className="card p-5 space-y-4 bg-gray-50/50">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <SourceSelect sources={sources} value={activeSourceId} onChange={handleSourceChange} />
+
           <div>
             <label className="block text-[11px] font-semibold text-gray-600 mb-1">Number of Cards</label>
             <select
@@ -133,15 +143,21 @@ export default function Flashcards() {
 
         <button
           onClick={handleGenerate}
-          disabled={loading}
+          disabled={loading || !activeSourceId}
           className="w-full btn-primary py-2.5 text-xs font-semibold shadow-xs flex items-center justify-center space-x-2"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
           <span>{loading ? 'Generating Flashcards...' : 'Generate Flashcards'}</span>
         </button>
+
+        {sources.length === 0 && (
+          <p className="text-xs text-gray-400 text-center">No processed sources yet — upload something first.</p>
+        )}
       </div>
 
       {/* Flashcard Component */}
+      {cardsData?.error && <GenerationNotice message={cardsData.error} />}
+
       {cardsData && cardsData.cards && cardsData.cards.length > 0 ? (
         <FlashCard
           card={cardsData.cards[currentIndex]}
@@ -150,11 +166,11 @@ export default function Flashcards() {
           onNext={() => setCurrentIndex((prev) => Math.min(prev + 1, cardsData.cards.length - 1))}
           onPrev={() => setCurrentIndex((prev) => Math.max(prev - 1, 0))}
         />
-      ) : (
+      ) : !cardsData?.error ? (
         <div className="card text-center py-16 text-gray-500 text-sm">
           Click "Generate Flashcards" to start studying.
         </div>
-      )}
+      ) : null}
     </div>
   )
 }

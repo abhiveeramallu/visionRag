@@ -88,7 +88,13 @@ export default function Sources() {
         <div className="card text-center py-16 text-ink-500 text-sm">No sources match your filters.</div>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map((s) => <SourceCard key={s.id} source={s} />)}
+          {filtered.map((s) => (
+            <SourceCard
+              key={s.id}
+              source={s}
+              onDeleted={usingDemo ? undefined : (id) => setSources((prev) => prev.filter((x) => x.id !== id))}
+            />
+          ))}
         </div>
       )}
     </div>

@@ -69,7 +69,7 @@ class ConfidenceScorer:
             return 0.5  # neutral when no text
 
         other_texts: List[str] = []
-        if modality == 'asr':
+        if modality in ('asr', 'text'):
             other_texts = [s.get('text', '') for s in window.get('ocr_segments', [])]
         elif modality == 'ocr':
             other_texts = [s.get('text', '') for s in window.get('asr_segments', [])]

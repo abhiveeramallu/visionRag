@@ -2,36 +2,55 @@ import React, { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { generateNotes, getSources } from '../services/api'
 import { FileCode, Copy, Download, Loader2, Sparkles, Check } from 'lucide-react'
+import SourceSelect from '../components/SourceSelect'
+import GenerationNotice from '../components/GenerationNotice'
+import { usePersistedState } from '../hooks/usePersistedState'
 
 export default function Notes() {
   const { sourceId } = useParams()
-  const [notesType, setNotesType] = useState('concise') // 'concise' | 'detailed' | 'revision'
-  const [topic, setTopic] = useState('')
-  const [notesData, setNotesData] = useState(null)
+  const [sources, setSources] = useState([])
+  const [activeSourceId, setActiveSourceId] = useState(sourceId || null)
+
+  // Persisted per-source so generated notes are still there after
+  // navigating away and back, instead of resetting to blank every time.
+  const [saved, setSaved] = usePersistedState(
+    `visionrag:notes:${activeSourceId || 'none'}`,
+    { notesType: 'concise', topic: '', notesData: null }
+  )
+  const notesType = saved.notesType
+  const topic = saved.topic
+  const notesData = saved.notesData
+  const setNotesType = (v) => setSaved((s) => ({ ...s, notesType: v }))
+  const setTopic = (v) => setSaved((s) => ({ ...s, topic: v }))
+  const setNotesData = (v) => setSaved((s) => ({ ...s, notesData: v }))
+
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  const [activeSourceId, setActiveSourceId] = useState(sourceId || null)
-
   useEffect(() => {
-    if (sourceId) {
-      setActiveSourceId(sourceId)
-    } else {
-      getSources()
-        .then((sources) => {
-          const completed = sources.find((s) => s.status === 'completed') || sources[0]
-          if (completed) setActiveSourceId(completed.id)
-        })
-        .catch(() => {})
-    }
+    getSources()
+      .then((data) => {
+        const completed = (data || []).filter((s) => s.status === 'completed')
+        setSources(completed)
+        if (!sourceId && !activeSourceId && completed.length > 0) {
+          setActiveSourceId(completed[0].id)
+        }
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceId])
 
+  const handleSourceChange = (id) => {
+    setActiveSourceId(id)
+    // usePersistedState re-syncs `saved` to this source's own cache (or the
+    // empty default) once activeSourceId updates the hook's key.
+  }
+
   const handleGenerate = async () => {
-    const targetId = sourceId || activeSourceId
-    if (!targetId) return
+    if (!activeSourceId) return
     setLoading(true)
     try {
-      const res = await generateNotes(targetId, notesType, topic || null)
+      const res = await generateNotes(activeSourceId, notesType, topic || null)
       setNotesData(res)
     } catch (err) {
       console.error(err)
@@ -49,13 +68,12 @@ export default function Notes() {
   }
 
   const handleDownload = () => {
-    const currentId = sourceId || activeSourceId || ''
     if (notesData?.content) {
       const blob = new Blob([notesData.content], { type: 'text/markdown' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `notes-${notesType}-${currentId.slice(0, 6)}.md`
+      a.download = `notes-${notesType}-${(activeSourceId || '').slice(0, 6)}.md`
       a.click()
       URL.revokeObjectURL(url)
     }
@@ -94,7 +112,9 @@ export default function Notes() {
 
       {/* Config Panel */}
       <div className="card p-5 space-y-4 bg-gray-50/50">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <SourceSelect sources={sources} value={activeSourceId} onChange={handleSourceChange} />
+
           <div>
             <label className="block text-[11px] font-semibold text-gray-600 mb-1">Notes Format</label>
             <select
@@ -122,12 +142,16 @@ export default function Notes() {
 
         <button
           onClick={handleGenerate}
-          disabled={loading}
+          disabled={loading || !activeSourceId}
           className="w-full btn-primary py-2.5 text-xs font-semibold shadow-xs flex items-center justify-center space-x-2"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
           <span>{loading ? 'Generating Notes...' : 'Generate Study Notes'}</span>
         </button>
+
+        {sources.length === 0 && (
+          <p className="text-xs text-gray-400 text-center">No processed sources yet — upload something first.</p>
+        )}
       </div>
 
       {/* Content Display */}
@@ -137,9 +161,15 @@ export default function Notes() {
           <span>Generating notes...</span>
         </div>
       ) : notesData ? (
-        <div className="card p-8 space-y-4 shadow-sm border-gray-200">
-          <div className="prose max-w-none text-sm text-gray-800 leading-relaxed whitespace-pre-wrap font-sans">
-            {notesData.content}
+        <div className="space-y-3">
+          {notesData.error && <GenerationNotice message={notesData.error} />}
+          <div className="card p-8 space-y-4 shadow-sm border-gray-200">
+            {notesData.error && (
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Verified evidence</p>
+            )}
+            <div className="prose max-w-none text-sm text-gray-800 leading-relaxed whitespace-pre-wrap font-sans">
+              {notesData.content}
+            </div>
           </div>
         </div>
       ) : (

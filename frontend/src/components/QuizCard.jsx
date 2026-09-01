@@ -1,10 +1,42 @@
 import React, { useState } from 'react'
 import { CheckCircle2, XCircle, HelpCircle, ArrowRight, BookOpen } from 'lucide-react'
 
-export default function QuizCard({ question, questionNumber, total, onAnswer }) {
+/**
+ * Single source of truth for "is this answer correct" — both the inline
+ * Correct!/Incorrect feedback and the quiz's final score must agree on the
+ * same verdict, so this is computed once here and the boolean result is
+ * passed up via onAnswer rather than being recomputed (differently) by the
+ * parent, which previously let the two disagree.
+ */
+function checkCorrect(question, userAns) {
+  const correctRaw = (question.answer || '').trim()
+  const userRaw = (userAns || '').trim()
+  if (!correctRaw || !userRaw) return false
+
+  if (question.question_type === 'mcq') {
+    // The "answer" field and the "options" array don't reliably agree on
+    // whether a letter prefix ("B) ...") is present — the LLM sometimes
+    // includes it in one but not the other. Strip any leading letter
+    // prefix from both sides before comparing so this doesn't matter.
+    const stripPrefix = (s) => s.replace(/^\s*[A-Za-z]\s*[).:]\s*/, '').trim().toLowerCase()
+    return stripPrefix(userRaw) === stripPrefix(correctRaw)
+  }
+
+  if (question.question_type === 'true_false') {
+    return userRaw.toLowerCase() === correctRaw.toLowerCase()
+  }
+
+  // Fill-in-the-blank / short-answer: free text, allow a partial/substring match
+  const userLower = userRaw.toLowerCase()
+  const correctLower = correctRaw.toLowerCase()
+  return userLower === correctLower || correctLower.includes(userLower)
+}
+
+export default function QuizCard({ question, questionNumber, total, isLast, onAnswer, onNext }) {
   const [selectedOption, setSelectedOption] = useState('')
   const [userText, setUserText] = useState('')
   const [submitted, setSubmitted] = useState(false)
+  const [wasCorrect, setWasCorrect] = useState(false)
 
   const isMCQ = question.question_type === 'mcq'
   const isTF = question.question_type === 'true_false'
@@ -14,23 +46,14 @@ export default function QuizCard({ question, questionNumber, total, onAnswer }) 
   const handleSubmit = (e) => {
     e.preventDefault()
     if (submitted) return
-    setSubmitted(true)
     const userAns = isMCQ || isTF ? selectedOption : userText
-    if (onAnswer) onAnswer(userAns)
+    const correct = checkCorrect(question, userAns)
+    setSubmitted(true)
+    setWasCorrect(correct)
+    if (onAnswer) onAnswer(userAns, correct)
   }
 
-  const handleNext = () => {
-    setSubmitted(false)
-    setSelectedOption('')
-    setUserText('')
-  }
-
-  const isCorrect = () => {
-    if (!submitted) return false
-    const userAns = (isMCQ || isTF ? selectedOption : userText).trim().toLowerCase()
-    const correctAns = (question.answer || '').trim().toLowerCase()
-    return userAns === correctAns || correctAns.includes(userAns)
-  }
+  const isCorrect = () => submitted && wasCorrect
 
   return (
     <div className="card space-y-6 max-w-2xl mx-auto shadow-md border-primary-100">
@@ -53,9 +76,11 @@ export default function QuizCard({ question, questionNumber, total, onAnswer }) 
           {isMCQ && question.options && (
             <div className="space-y-2">
               {question.options.map((opt, idx) => {
-                const optLetter = opt.charAt(0)
                 const isSelected = selectedOption === opt
-                const isAnswer = question.answer && question.answer.startsWith(optLetter)
+                // Same check used for scoring — the option highlighted as
+                // "correct" here is guaranteed to be the one that actually
+                // scores as correct if selected, not a separately-computed guess.
+                const isAnswer = checkCorrect(question, opt)
 
                 let bgClass = 'border-gray-200 hover:border-primary-400 bg-white'
                 if (submitted) {
@@ -91,7 +116,7 @@ export default function QuizCard({ question, questionNumber, total, onAnswer }) 
             <div className="grid grid-cols-2 gap-4">
               {['True', 'False'].map((val) => {
                 const isSelected = selectedOption === val
-                const isAnswer = (question.answer || '').toLowerCase() === val.toLowerCase()
+                const isAnswer = checkCorrect(question, val)
                 let btnClass = 'border-gray-300 hover:border-primary-400 bg-white'
                 if (submitted) {
                   if (isAnswer) btnClass = 'border-green-500 bg-green-50 text-green-900 font-bold'
@@ -168,6 +193,15 @@ export default function QuizCard({ question, questionNumber, total, onAnswer }) 
               )}
             </div>
           </div>
+
+          <button
+            type="button"
+            onClick={onNext}
+            className="w-full btn-primary py-3 font-semibold shadow-sm flex items-center justify-center gap-2"
+          >
+            <span>{isLast ? 'Finish Quiz' : 'Next Question'}</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
         </div>
       )}
     </div>

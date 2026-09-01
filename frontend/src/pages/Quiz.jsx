@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom'
 import { generateQuiz, getSources } from '../services/api'
 import QuizCard from '../components/QuizCard'
 import { HelpCircle, Loader2, Sparkles, Trophy, RotateCcw } from 'lucide-react'
+import SourceSelect from '../components/SourceSelect'
+import GenerationNotice from '../components/GenerationNotice'
 
 export default function Quiz() {
   const { sourceId } = useParams()
@@ -16,23 +18,30 @@ export default function Quiz() {
   const [score, setScore] = useState(0)
   const [completed, setCompleted] = useState(false)
 
+  const [sources, setSources] = useState([])
   const [activeSourceId, setActiveSourceId] = useState(sourceId || null)
 
   useEffect(() => {
-    if (sourceId) {
-      setActiveSourceId(sourceId)
-    } else {
-      getSources()
-        .then((sources) => {
-          const completed = sources.find((s) => s.status === 'completed') || sources[0]
-          if (completed) setActiveSourceId(completed.id)
-        })
-        .catch(() => {})
-    }
+    getSources()
+      .then((data) => {
+        const done = (data || []).filter((s) => s.status === 'completed')
+        setSources(done)
+        if (!sourceId && !activeSourceId && done.length > 0) {
+          setActiveSourceId(done[0].id)
+        }
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceId])
 
+  const handleSourceChange = (id) => {
+    setActiveSourceId(id)
+    setQuizData(null)
+    setCompleted(false)
+  }
+
   const handleGenerate = async () => {
-    const targetId = sourceId || activeSourceId
+    const targetId = activeSourceId
     if (!targetId) return
     setLoading(true)
     setCompleted(false)
@@ -48,18 +57,22 @@ export default function Quiz() {
     }
   }
 
-  const handleAnswer = (userAnswer) => {
-    const currentQ = quizData.questions[currentIndex]
-    const isCorrect = (userAnswer || '').trim().toLowerCase() === (currentQ.answer || '').trim().toLowerCase()
+  const handleAnswer = (userAnswer, isCorrect) => {
+    // isCorrect comes from QuizCard's own verdict — the same one shown to
+    // the student as "Correct!"/"Incorrect" — so the tally can never disagree
+    // with what was actually displayed (it previously recomputed this with a
+    // stricter, different comparison and could silently disagree).
     if (isCorrect) setScore((prev) => prev + 1)
+    // Advancing now happens only when the student clicks "Next" in QuizCard
+    // (see handleNext) — no more auto-advancing on a blind timer.
+  }
 
-    setTimeout(() => {
-      if (currentIndex + 1 < quizData.questions.length) {
-        setCurrentIndex((prev) => prev + 1)
-      } else {
-        setCompleted(true)
-      }
-    }, 1500)
+  const handleNext = () => {
+    if (currentIndex + 1 < quizData.questions.length) {
+      setCurrentIndex((prev) => prev + 1)
+    } else {
+      setCompleted(true)
+    }
   }
 
   return (
@@ -76,6 +89,8 @@ export default function Quiz() {
       <div className="card p-5 space-y-4 bg-gray-50/50">
         <h3 className="text-xs font-bold uppercase tracking-wider text-gray-700">Quiz Settings</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+          <SourceSelect sources={sources} value={activeSourceId} onChange={handleSourceChange} />
+
           <div>
             <label className="block text-[11px] font-semibold text-gray-600 mb-1">Question Type</label>
             <select
@@ -130,21 +145,34 @@ export default function Quiz() {
 
         <button
           onClick={handleGenerate}
-          disabled={loading}
+          disabled={loading || !activeSourceId}
           className="w-full btn-primary py-2.5 text-xs font-semibold shadow-xs flex items-center justify-center space-x-2"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
           <span>{loading ? 'Generating Grounded Quiz...' : 'Generate New Quiz'}</span>
         </button>
+
+        {sources.length === 0 && (
+          <p className="text-xs text-gray-400 text-center">No processed sources yet — upload something first.</p>
+        )}
       </div>
 
       {/* Quiz Area */}
+      {quizData?.error && <GenerationNotice message={quizData.error} />}
+
       {quizData && quizData.questions && quizData.questions.length > 0 && !completed && (
         <QuizCard
+          // Force a fresh component instance per question — without a key
+          // tied to the question, React reuses the same instance across
+          // questions and its internal "submitted"/selected-option state
+          // bleeds into the next question instead of resetting.
+          key={quizData.questions[currentIndex].question_id || currentIndex}
           question={quizData.questions[currentIndex]}
           questionNumber={currentIndex + 1}
           total={quizData.questions.length}
+          isLast={currentIndex + 1 >= quizData.questions.length}
           onAnswer={handleAnswer}
+          onNext={handleNext}
         />
       )}
 

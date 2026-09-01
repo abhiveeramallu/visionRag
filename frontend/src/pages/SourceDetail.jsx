@@ -93,7 +93,7 @@ function MediaPanel({ source }) {
   )
 }
 
-function EvidencePanel({ evidence, conceptSlug }) {
+function EvidencePanel({ evidence, sourceId }) {
   const hasEvidence = evidence && evidence.length > 0
   const primary = hasEvidence ? evidence[0] : null
 
@@ -139,7 +139,7 @@ function EvidencePanel({ evidence, conceptSlug }) {
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Confidence</p>
                 <p className="text-sm font-semibold text-green-700 mt-0.5">
-                  {Math.round((primary?.confidence || 0.96) * 100)}%
+                  {Math.round((primary?.confidence ?? 0.96) * 100)}%
                 </p>
               </div>
             </div>
@@ -151,7 +151,7 @@ function EvidencePanel({ evidence, conceptSlug }) {
           </div>
 
           <Link
-            to={`/knowledge-evolution/${conceptSlug || 'gradient-descent'}`}
+            to={`/knowledge-evolution/${sourceId}`}
             className="btn-secondary w-full py-2 text-xs font-semibold flex items-center justify-center gap-1.5"
           >
             <History className="w-3.5 h-3.5" />
@@ -296,7 +296,7 @@ export default function SourceDetail() {
           </form>
         </div>
 
-        <EvidencePanel evidence={lastEvidence} conceptSlug="gradient-descent" />
+        <EvidencePanel evidence={lastEvidence} sourceId={source.id} />
       </div>
     </div>
   )

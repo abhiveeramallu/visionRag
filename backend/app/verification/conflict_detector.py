@@ -197,12 +197,20 @@ class ConflictDetector:
             'source_id': window.get('source_id'),
         }
 
+        # The "asr_segments" bucket holds real spoken-word ASR for video/audio
+        # sources, but holds plain document text (modality='text') for PDFs and
+        # PPTs — label the conflict with each side's *actual* modality instead
+        # of always saying "asr", or a PDF-only conflict misleadingly implies
+        # the source had speech.
+        modality_a = (asr_segs[0].get('modality') or 'asr') if asr_segs else 'asr'
+        modality_b = (ocr_segs[0].get('modality') or 'ocr') if ocr_segs else 'ocr'
+
         for check_fn in (
             self._detect_complexity_conflict,
             self._detect_numeric_conflict,
             self._detect_factual_contradiction,
         ):
-            conflict = check_fn(asr_text, ocr_text, 'asr', 'ocr', context)
+            conflict = check_fn(asr_text, ocr_text, modality_a, modality_b, context)
             if conflict:
                 return [conflict]  # one conflict per window-pair is sufficient
 

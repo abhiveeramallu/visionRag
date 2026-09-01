@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import {
   Home, Library, MessageSquare, FileText, HelpCircle, Layers,
-  StickyNote, Share2, Settings, ShieldCheck, X, Loader2,
+  StickyNote, Share2, ShieldCheck, X, Loader2,
 } from 'lucide-react'
 import { getSources } from '../services/api'
 import { mockSources } from '../data/mockData'
@@ -108,17 +108,6 @@ export default function Sidebar({ open, onClose }) {
                 ))}
               </div>
             )}
-          </div>
-
-          <div className="pt-4">
-            <Link
-              to="/settings"
-              onClick={onClose}
-              className={`nav-link ${location.pathname === '/settings' ? 'nav-link-active' : ''}`}
-            >
-              <Settings className="w-4 h-4 flex-shrink-0" />
-              <span>Settings</span>
-            </Link>
           </div>
         </nav>
 

@@ -37,7 +37,12 @@ export const uploadFile = (file, onProgress) => {
 export const getStatus = (sourceId) => api.get(`/status/${sourceId}`)
 export const getSources = () => api.get('/sources')
 export const getSource = (sourceId) => api.get(`/source/${sourceId}`)
+export const deleteSource = (sourceId) => api.delete(`/source/${sourceId}`)
 export const getKnowledge = (sourceId) => api.get(`/knowledge/${sourceId}`)
+export const getKnowledgeUnitHistory = (kuId) => api.get(`/knowledge/unit/${kuId}/history`)
+export const getKnowledgeUnitEvidence = (kuId) => api.get(`/knowledge/unit/${kuId}/evidence`)
+export const getSourceConflicts = (sourceId) => api.get(`/source/${sourceId}/conflicts`)
+export const getSourceEvolution = (sourceId) => api.get(`/source/${sourceId}/evolution`)
 
 export const querySource = (sourceId, query, topK = 5, includeEvidence = true, includeConflicts = true) =>
   api.post('/query', {

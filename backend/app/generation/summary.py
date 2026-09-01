@@ -7,6 +7,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from app.generation.llm import friendly_llm_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,12 +67,19 @@ class SummaryGenerator:
             'Include key concepts, main topics, and important conclusions. '
             'Format with clear sections.'
         )
-        content = await self.llm.complete(SUMMARY_SYSTEM, prompt, temperature=0.3, max_tokens=1200)
+        error = None
+        try:
+            content = await self.llm.complete(SUMMARY_SYSTEM, prompt, temperature=0.3, max_tokens=1200)
+        except Exception as e:
+            logger.warning('Summary generation failed: %s', e)
+            error = friendly_llm_error(e)
+            content = context[:2000]
         return {
             'source_id': '',
             'summary_type': 'overall',
             'content': content,
             'sections': [],
+            'error': error,
             'generated_at': datetime.utcnow().isoformat(),
         }
 
@@ -95,12 +104,19 @@ class SummaryGenerator:
             f'Write a focused summary about "{topic}" based on this content. '
             'Include relevant examples, definitions, and key points.'
         )
-        content = await self.llm.complete(SUMMARY_SYSTEM, prompt, temperature=0.3, max_tokens=1000)
+        error = None
+        try:
+            content = await self.llm.complete(SUMMARY_SYSTEM, prompt, temperature=0.3, max_tokens=1000)
+        except Exception as e:
+            logger.warning('Topic summary generation failed: %s', e)
+            error = friendly_llm_error(e)
+            content = context[:2000]
         return {
             'source_id': '',
             'summary_type': 'topic',
             'content': content,
             'sections': [],
+            'error': error,
             'generated_at': datetime.utcnow().isoformat(),
         }
 
@@ -197,21 +213,21 @@ class QuizGenerator:
             'mcq': (
                 f'Generate {num_questions} multiple-choice questions. '
                 'Each question must have exactly 4 options (A, B, C, D) and one correct answer. '
-                'JSON format: [{"question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], '
-                '"answer": "A) ...", "explanation": "..."}]'
+                'JSON format: {"questions": [{"question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], '
+                '"answer": "A) ...", "explanation": "..."}]}'
             ),
             'true_false': (
                 f'Generate {num_questions} true/false questions. '
-                'JSON format: [{"question": "...", "options": ["True", "False"], '
-                '"answer": "True" or "False", "explanation": "..."}]'
+                'JSON format: {"questions": [{"question": "...", "options": ["True", "False"], '
+                '"answer": "True" or "False", "explanation": "..."}]}'
             ),
             'fill_blank': (
                 f'Generate {num_questions} fill-in-the-blank questions. Use ___ for the blank. '
-                'JSON format: [{"question": "...", "options": null, "answer": "...", "explanation": "..."}]'
+                'JSON format: {"questions": [{"question": "...", "options": null, "answer": "...", "explanation": "..."}]}'
             ),
             'short_answer': (
                 f'Generate {num_questions} short-answer questions. '
-                'JSON format: [{"question": "...", "options": null, "answer": "...", "explanation": "..."}]'
+                'JSON format: {"questions": [{"question": "...", "options": null, "answer": "...", "explanation": "..."}]}'
             ),
         }
         type_instr = type_instructions.get(quiz_type, type_instructions['mcq'])
@@ -223,7 +239,7 @@ class QuizGenerator:
             f'Difficulty: {self._difficulty_instruction(difficulty)}\n\n'
             f'CONTENT:\n{context}\n\n'
             f'{type_instr}\n'
-            'Return ONLY a JSON array, nothing else.'
+            'Return ONLY that JSON object, nothing else.'
         )
 
     async def generate(
@@ -237,16 +253,32 @@ class QuizGenerator:
     ) -> Dict[str, Any]:
         context = _units_to_text(units, max_chars=6000)
         prompt = self._build_prompt(context, quiz_type, difficulty, num_questions, topic, source_title)
-        raw = await self.llm.complete(QUIZ_SYSTEM, prompt, temperature=0.4, max_tokens=2500)
 
         questions = []
+        try:
+            raw = await self.llm.complete(QUIZ_SYSTEM, prompt, temperature=0.4, max_tokens=3000, json_mode=True)
+        except Exception as e:
+            logger.warning('Quiz generation failed: %s', e)
+            return {
+                'source_id': '',
+                'questions': [],
+                'topic': topic,
+                'difficulty': difficulty,
+                'error': friendly_llm_error(e),
+                'generated_at': datetime.utcnow().isoformat(),
+            }
+
         try:
             # Strip markdown code fences if present
             cleaned = raw.strip()
             if cleaned.startswith('```'):
                 cleaned = cleaned.split('\n', 1)[-1].rsplit('```', 1)[0]
             parsed = json.loads(cleaned)
-            for i, q in enumerate(parsed[:num_questions]):
+            # Accept both {"questions": [...]} (what we ask for — required for
+            # OpenAI's strict JSON mode) and a bare [...] (what some models,
+            # local ones especially, still produce despite the instruction).
+            question_list = parsed.get('questions', []) if isinstance(parsed, dict) else parsed
+            for i, q in enumerate(question_list[:num_questions]):
                 questions.append({
                     'question_id': str(uuid.uuid4()),
                     'question': q.get('question', ''),
@@ -259,22 +291,21 @@ class QuizGenerator:
                 })
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning('Quiz JSON parse failed: %s\nRaw: %s', e, raw[:300])
-            questions.append({
-                'question_id': str(uuid.uuid4()),
-                'question': f'[Quiz generation error: LLM response could not be parsed — {e}]',
-                'question_type': quiz_type,
-                'options': None,
-                'answer': '',
-                'explanation': 'The LLM response was not valid JSON. Try again.',
+            return {
+                'source_id': '',
+                'questions': [],
+                'topic': topic,
                 'difficulty': difficulty,
-                'source_evidence': None,
-            })
+                'error': 'The AI response could not be understood — please try generating again.',
+                'generated_at': datetime.utcnow().isoformat(),
+            }
 
         return {
             'source_id': '',
             'questions': questions,
             'topic': topic,
             'difficulty': difficulty,
+            'error': None,
             'generated_at': datetime.utcnow().isoformat(),
         }
 
@@ -318,18 +349,30 @@ class FlashcardGenerator:
             f'Source: "{source_title}"\n{topic_note}\n\n'
             f'CONTENT:\n{context}\n\n'
             f'Generate {num_cards} flashcard pairs. '
-            'JSON format: [{"front": "Question?", "back": "Answer.", "concept": "Topic name"}]\n'
-            'Return ONLY a JSON array.'
+            'JSON format: {"cards": [{"front": "Question?", "back": "Answer.", "concept": "Topic name"}]}\n'
+            'Return ONLY that JSON object.'
         )
 
-        raw = await self.llm.complete(FLASHCARD_SYSTEM, prompt, temperature=0.35, max_tokens=2000)
         cards = []
+        try:
+            raw = await self.llm.complete(FLASHCARD_SYSTEM, prompt, temperature=0.35, max_tokens=2500, json_mode=True)
+        except Exception as e:
+            logger.warning('Flashcard generation failed: %s', e)
+            return {
+                'source_id': '',
+                'cards': [],
+                'topic': topic,
+                'error': friendly_llm_error(e),
+                'generated_at': datetime.utcnow().isoformat(),
+            }
+
         try:
             cleaned = raw.strip()
             if cleaned.startswith('```'):
                 cleaned = cleaned.split('\n', 1)[-1].rsplit('```', 1)[0]
             parsed = json.loads(cleaned)
-            for c in parsed[:num_cards]:
+            card_list = parsed.get('cards', []) if isinstance(parsed, dict) else parsed
+            for c in card_list[:num_cards]:
                 cards.append({
                     'card_id': str(uuid.uuid4()),
                     'front': c.get('front', ''),
@@ -340,11 +383,19 @@ class FlashcardGenerator:
                 })
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning('Flashcard JSON parse failed: %s', e)
+            return {
+                'source_id': '',
+                'cards': [],
+                'topic': topic,
+                'error': 'The AI response could not be understood — please try generating again.',
+                'generated_at': datetime.utcnow().isoformat(),
+            }
 
         return {
             'source_id': '',
             'cards': cards,
             'topic': topic,
+            'error': None,
             'generated_at': datetime.utcnow().isoformat(),
         }
 
@@ -391,12 +442,19 @@ class NotesGenerator:
             f'CONTENT:\n{context}\n\n'
             f'{style}'
         )
-        content = await self.llm.complete(NOTES_SYSTEM, prompt, temperature=0.25, max_tokens=2000)
+        error = None
+        try:
+            content = await self.llm.complete(NOTES_SYSTEM, prompt, temperature=0.25, max_tokens=2000)
+        except Exception as e:
+            logger.warning('Notes generation failed: %s', e)
+            error = friendly_llm_error(e)
+            content = context[:2000]
 
         return {
             'source_id': '',
             'notes_type': notes_type,
             'content': content,
             'sections': [],
+            'error': error,
             'generated_at': datetime.utcnow().isoformat(),
         }

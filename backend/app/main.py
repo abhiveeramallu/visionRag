@@ -37,6 +37,37 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error('Database initialization failed (app may not function): %s', e)
 
+    # Fail out any jobs left "processing"/"pending" by a previous process that
+    # died mid-run (crash, container restart, host reboot) — otherwise they'd
+    # show as stuck-forever in the UI with no way to retry.
+    try:
+        from app.database.postgres import async_session as _AsyncSessionLocal
+        from app.knowledge.models import ProcessingJob, Source
+        from sqlalchemy import select as _select
+        from datetime import datetime as _datetime
+
+        async with _AsyncSessionLocal() as _db:
+            result = await _db.execute(
+                _select(ProcessingJob).where(ProcessingJob.status.in_(['pending', 'processing']))
+            )
+            orphaned_jobs = result.scalars().all()
+            for job in orphaned_jobs:
+                job.status = 'failed'
+                job.current_step = 'Interrupted'
+                job.error_message = 'Processing was interrupted by a server restart. Please re-upload this source.'
+                job.updated_at = _datetime.utcnow()
+
+                src_result = await _db.execute(_select(Source).where(Source.id == job.source_id))
+                src = src_result.scalar_one_or_none()
+                if src and src.status in ('pending', 'processing'):
+                    src.status = 'failed'
+
+            if orphaned_jobs:
+                await _db.commit()
+                logger.warning('Marked %d orphaned processing job(s) as failed on startup', len(orphaned_jobs))
+    except Exception as e:
+        logger.error('Orphaned-job cleanup failed (non-fatal): %s', e)
+
     # Initialize Qdrant collection
     try:
         from app.database.qdrant import QdrantManager

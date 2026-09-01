@@ -21,7 +21,7 @@ sentence-transformers==3.0.1
 transformers==4.39.3
 
 # Video/Audio Processing
-yt-dlp==2024.5.27
+yt-dlp==2026.8.19
 ffmpeg-python==0.2.0
 opencv-python-headless==4.9.0.80
 

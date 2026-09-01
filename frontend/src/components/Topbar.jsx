@@ -89,12 +89,12 @@ export default function Topbar({ onMenuClick, onAddSource }) {
           )}
         </div>
 
-        <button
-          onClick={() => navigate('/settings')}
+        <div
+          title="Student Account"
           className="w-8 h-8 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-xs font-bold flex-shrink-0"
         >
           ST
-        </button>
+        </div>
       </div>
     </header>
   )

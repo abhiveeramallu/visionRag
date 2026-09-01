@@ -131,12 +131,36 @@ async def run_ingestion_pipeline(
 
             # --- Step 3: ASR ---
             asr_segments = []
+            av_formula_segments = []
+            av_code_segments = []
             if audio_path and source_type in ('video', 'audio', 'youtube'):
                 await _update_job(db, job_id, current_step='Transcribing audio (ASR)', progress=0.30)
                 try:
                     from app.extraction.asr import ASRExtractor
+                    from app.extraction.formula import FormulaExtractor
+                    from app.extraction.code_parser import CodeParser
                     asr = ASRExtractor(settings)
                     asr_segments = await asr.transcribe(audio_path, source_id)
+
+                    formula_extractor = FormulaExtractor()
+                    code_parser = CodeParser()
+                    for seg in asr_segments:
+                        seg_text = seg.get('text', '')
+                        for match in formula_extractor.extract_from_text(seg_text):
+                            av_formula_segments.append({
+                                'text': match, 'confidence': 0.7, 'modality': 'formula',
+                                'source_id': source_id,
+                                'timestamp_start': seg.get('timestamp_start') or seg.get('start'),
+                                'timestamp_end': seg.get('timestamp_end') or seg.get('end'),
+                            })
+                        for block in code_parser.extract_code_blocks(seg_text):
+                            av_code_segments.append({
+                                'text': block['code'], 'confidence': block['confidence'],
+                                'modality': 'code', 'source_id': source_id,
+                                'timestamp_start': seg.get('timestamp_start') or seg.get('start'),
+                                'timestamp_end': seg.get('timestamp_end') or seg.get('end'),
+                                'language': block['language'],
+                            })
                 except Exception as e:
                     logger.warning('ASR failed (not fatal): %s', e)
 
@@ -234,30 +258,107 @@ async def run_ingestion_pipeline(
             elif source_type == 'ppt':
                 await _update_job(db, job_id, current_step='Extracting PPT text', progress=0.45)
                 from app.ingestion.ppt import PPTIngester
+                from app.extraction.formula import FormulaExtractor
+                from app.extraction.code_parser import CodeParser
                 ppt_ingester = PPTIngester()
+                formula_extractor = FormulaExtractor()
+                code_parser = CodeParser()
                 out_dir = Path(settings.processed_dir) / source_id
                 out_dir.mkdir(parents=True, exist_ok=True)
                 slides = await ppt_ingester.extract(Path(file_path), out_dir)
+
+                has_slide_images = any(slide['images'] for slide in slides)
+                ocr_extractor = None
+                if has_slide_images:
+                    await _update_job(db, job_id, current_step='Running OCR', progress=0.50)
+                    try:
+                        from app.extraction.ocr import OCRExtractor
+                        ocr_extractor = OCRExtractor(settings)
+                    except Exception as e:
+                        logger.warning('OCR extractor init failed (not fatal): %s', e)
+
+                total_slide_images = sum(len(slide['images']) for slide in slides)
+                slide_images_done = 0
+
                 for slide in slides:
+                    slide_num = slide['slide_num']
+                    slide_text = '\n\n'.join(t for t in (slide.get('title', ''), slide['text'], slide.get('notes', '')) if t)
                     asr_segments.append({
-                        'text': slide['text'], 'start': None, 'end': None,
+                        'text': slide_text, 'start': None, 'end': None,
                         'confidence': 0.95, 'modality': 'text',
-                        'source_id': source_id, 'page': slide['slide_num'],
+                        'source_id': source_id, 'page': slide_num,
                         'timestamp_start': None, 'timestamp_end': None
                     })
+
+                    for match in formula_extractor.extract_from_text(slide_text):
+                        formula_segments.append({
+                            'text': match, 'confidence': 0.75, 'modality': 'formula',
+                            'source_id': source_id, 'page': slide_num,
+                            'timestamp_start': None, 'timestamp_end': None,
+                        })
+
+                    for block in code_parser.extract_code_blocks(slide_text):
+                        code_segments.append({
+                            'text': block['code'], 'confidence': block['confidence'],
+                            'modality': 'code', 'source_id': source_id, 'page': slide_num,
+                            'timestamp_start': None, 'timestamp_end': None,
+                            'language': block['language'],
+                        })
+
+                    if ocr_extractor and slide['images']:
+                        for img in slide['images']:
+                            try:
+                                img_ocr = await ocr_extractor.extract_from_image(
+                                    Path(img['image_path']), source_id, page=slide_num
+                                )
+                                for seg in img_ocr:
+                                    ocr_segments.append({
+                                        'text': seg['text'], 'start': None, 'end': None,
+                                        'confidence': seg.get('confidence', 0.85), 'modality': 'ocr',
+                                        'source_id': source_id, 'page': slide_num,
+                                        'timestamp_start': None, 'timestamp_end': None,
+                                    })
+                            except Exception as e:
+                                logger.warning('PPT slide image OCR failed (not fatal): %s', e)
+                            finally:
+                                slide_images_done += 1
+                                if total_slide_images:
+                                    ocr_progress = 0.50 + 0.15 * (slide_images_done / total_slide_images)
+                                    await _update_job(
+                                        db, job_id,
+                                        current_step=f'Running OCR ({slide_images_done}/{total_slide_images} images)',
+                                        progress=ocr_progress,
+                                    )
             elif source_type == 'image':
                 await _update_job(db, job_id, current_step='Running OCR on image', progress=0.45)
                 try:
                     from app.extraction.ocr import OCRExtractor
+                    from app.extraction.formula import FormulaExtractor
+                    from app.extraction.code_parser import CodeParser
                     ocr_extractor = OCRExtractor(settings)
                     image_ocr = await ocr_extractor.extract_from_image(Path(file_path), source_id, page=1)
+                    formula_extractor = FormulaExtractor()
+                    code_parser = CodeParser()
                     for seg in image_ocr:
-                        asr_segments.append({
+                        ocr_segments.append({
                             'text': seg['text'], 'start': None, 'end': None,
                             'confidence': seg.get('confidence', 0.9), 'modality': 'ocr',
                             'source_id': source_id, 'page': 1,
                             'timestamp_start': None, 'timestamp_end': None
                         })
+                        for match in formula_extractor.extract_from_text(seg['text']):
+                            formula_segments.append({
+                                'text': match, 'confidence': 0.7, 'modality': 'formula',
+                                'source_id': source_id, 'page': 1,
+                                'timestamp_start': None, 'timestamp_end': None,
+                            })
+                        for block in code_parser.extract_code_blocks(seg['text']):
+                            code_segments.append({
+                                'text': block['code'], 'confidence': block['confidence'],
+                                'modality': 'code', 'source_id': source_id, 'page': 1,
+                                'timestamp_start': None, 'timestamp_end': None,
+                                'language': block['language'],
+                            })
                 except Exception as e:
                     logger.warning('Image OCR failed: %s', e)
 
@@ -271,8 +372,8 @@ async def run_ingestion_pipeline(
                     asr_segments=asr_segments,
                     ocr_segments=ocr_segments,
                     vision_segments=[],
-                    formula_segments=[],
-                    code_segments=[],
+                    formula_segments=av_formula_segments,
+                    code_segments=av_code_segments,
                     total_duration=total_duration,
                 )
             else:
@@ -290,11 +391,14 @@ async def run_ingestion_pipeline(
             await _update_job(db, job_id, current_step='Creating knowledge units', progress=0.75)
             from app.verification.conflict_detector import ConflictDetector
             from app.verification.confidence import ConfidenceScorer
+            from app.knowledge.evolution import detect_correction_phrase, content_keywords, keyword_overlap
             detector = ConflictDetector(settings)
             scorer = ConfidenceScorer()
             all_conflicts = detector.detect_all(windows)
 
             ku_dicts = []
+            evidence_rows = []
+            concept_registry = []  # ordered list of {'keywords', 'ku', 'concept'} seen so far, for correction linking
             for window in windows:
                 all_segs = (
                     window.get('asr_segments', [])
@@ -324,6 +428,35 @@ async def run_ingestion_pipeline(
                     or [{}]
                 )[0].get('modality', 'text')
 
+                # --- Correction / version-chain detection (VKEG) ---
+                # Only treat this as a correction of an earlier unit when BOTH
+                # explicit correction language is present AND it topically
+                # overlaps a recently-seen concept for this source — either
+                # signal alone is too weak and would mislink unrelated content.
+                previous_version_id = None
+                ku_version = 1
+                ku_status = 'active'
+                correction_reason = None
+                new_keywords = content_keywords(combined_text)
+
+                correction_phrase = detect_correction_phrase(combined_text)
+                if correction_phrase and concept_registry:
+                    best_entry, best_overlap = None, 0.0
+                    for entry in reversed(concept_registry):
+                        overlap = keyword_overlap(new_keywords, entry['keywords'])
+                        if overlap > best_overlap:
+                            best_overlap, best_entry = overlap, entry
+                    if best_entry and best_overlap >= 0.15:
+                        previous_version_id = best_entry['ku'].id
+                        ku_version = best_entry['ku'].version + 1
+                        ku_status = 'verified'
+                        correction_reason = (
+                            f'Detected correction language ("{correction_phrase}") updating an '
+                            f'earlier statement about "{best_entry["concept"][:60]}".'
+                        )
+                        best_entry['ku'].status = 'superseded'
+                        concept = best_entry['concept']  # keep the concept name stable across versions
+
                 ku = KnowledgeUnit(
                     id=ku_id,
                     concept=concept,
@@ -335,10 +468,14 @@ async def run_ingestion_pipeline(
                     page=window.get('page'),
                     slide=window.get('slide'),
                     confidence=conf,
-                    status='active',
-                    version=1,
+                    status=ku_status,
+                    version=ku_version,
+                    previous_version_id=previous_version_id,
+                    correction_reason=correction_reason,
                 )
                 db.add(ku)
+                concept_registry.append({'keywords': new_keywords, 'ku': ku, 'concept': concept})
+
                 ku_dicts.append({
                     'id': ku_id, 'concept': concept,
                     'content': combined_text[:2000],
@@ -349,9 +486,26 @@ async def run_ingestion_pipeline(
                     'page': window.get('page'),
                     'slide': window.get('slide'),
                     'confidence': conf,
-                    'status': 'active',
-                    'version': 1,
+                    'status': ku_status,
+                    'version': ku_version,
                 })
+
+                # --- Evidence rows: one per raw segment supporting this unit ---
+                for seg in all_segs:
+                    evidence_rows.append(Evidence(
+                        id=str(uuid.uuid4()),
+                        knowledge_unit_id=ku_id,
+                        text=(seg.get('text', '') or '')[:2000],
+                        modality=seg.get('modality', primary_modality),
+                        source_id=source_id,
+                        timestamp_start=seg.get('timestamp_start') if seg.get('timestamp_start') is not None else seg.get('start'),
+                        timestamp_end=seg.get('timestamp_end') if seg.get('timestamp_end') is not None else seg.get('end'),
+                        page=window.get('page'),
+                        extraction_confidence=seg.get('confidence', conf),
+                    ))
+
+            for ev in evidence_rows:
+                db.add(ev)
 
             # Save conflicts to DB
             from app.knowledge.models import Conflict
@@ -415,7 +569,7 @@ async def run_ingestion_pipeline(
 
 
 # Need KnowledgeUnit import inside the function to avoid circular imports
-from app.knowledge.models import KnowledgeUnit  # noqa: E402
+from app.knowledge.models import KnowledgeUnit, Evidence  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
