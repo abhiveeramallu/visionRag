@@ -62,7 +62,7 @@ export default function MessageBubble({ message, onTimestampClick }) {
   return (
     <div className="flex justify-start my-4">
       <div className="flex items-start max-w-3xl space-x-3">
-        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-600 to-accent-600 flex items-center justify-center text-white text-sm font-bold shadow-sm flex-shrink-0">
+        <div className="w-9 h-9 rounded-xl bg-primary-600 flex items-center justify-center text-white text-sm font-bold shadow-sm flex-shrink-0">
           <Bot className="w-5 h-5" />
         </div>
 

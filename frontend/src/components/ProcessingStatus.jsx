@@ -1,15 +1,18 @@
 import React from 'react'
-import { CheckCircle2, Clock, AlertTriangle, Loader2, FileCheck, ArrowRight } from 'lucide-react'
+import { CheckCircle2, Loader2, AlertTriangle, Clock, ArrowRight, FileCheck } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 const STEPS = [
-  { key: 'Downloading', label: 'Download / Load Material' },
-  { key: 'Extracting audio and frames', label: 'Extract Audio & Video Frames' },
-  { key: 'Transcribing audio (ASR)', label: 'WhisperX ASR Transcription' },
-  { key: 'Running OCR', label: 'PaddleOCR Vision & Document Extraction' },
-  { key: 'Aligning modalities', label: 'Multimodal Temporal/Page Alignment' },
-  { key: 'Creating knowledge units', label: 'VKEG Knowledge Units & Conflict Detection' },
-  { key: 'Indexing knowledge units', label: 'Qdrant Hybrid Vector Indexing' },
+  { label: 'Source received' },
+  { label: 'Audio extraction' },
+  { label: 'Frame extraction' },
+  { label: 'Speech recognition' },
+  { label: 'OCR analysis' },
+  { label: 'Visual analysis' },
+  { label: 'Cross-modal verification' },
+  { label: 'Knowledge graph construction' },
+  { label: 'Indexing' },
+  { label: 'Ready' },
 ]
 
 export default function ProcessingStatus({ jobStatus, sourceId }) {
@@ -18,118 +21,97 @@ export default function ProcessingStatus({ jobStatus, sourceId }) {
   const isCompleted = jobStatus.status === 'completed'
   const isFailed = jobStatus.status === 'failed'
   const progressPercent = Math.round((jobStatus.progress || 0) * 100)
+  const activeStepIndex = isCompleted
+    ? STEPS.length - 1
+    : Math.min(STEPS.length - 2, Math.floor((progressPercent / 100) * (STEPS.length - 1)))
 
   return (
-    <div className="card space-y-6">
-      <div className="flex items-center justify-between border-b border-gray-100 pb-4">
-        <div>
-          <h2 className="text-lg font-bold text-gray-900 flex items-center space-x-2">
-            {isCompleted ? (
-              <CheckCircle2 className="w-5 h-5 text-green-500" />
-            ) : isFailed ? (
-              <AlertTriangle className="w-5 h-5 text-red-500" />
-            ) : (
-              <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
-            )}
-            <span>Processing Educational Material</span>
-          </h2>
-          <p className="text-xs text-gray-500 mt-0.5">Source ID: {jobStatus.source_id || sourceId}</p>
-        </div>
-
-        <div className="text-right">
-          <span
-            className={`px-2.5 py-1 rounded-full text-xs font-semibold uppercase ${
-              isCompleted
-                ? 'bg-green-100 text-green-800'
-                : isFailed
-                ? 'bg-red-100 text-red-800'
-                : 'bg-primary-100 text-primary-800'
-            }`}
-          >
-            {jobStatus.status}
-          </span>
-          <p className="text-xs text-gray-500 mt-1 font-mono">{progressPercent}%</p>
-        </div>
-      </div>
-
-      {/* Progress Bar */}
-      <div className="space-y-2">
-        <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden shadow-inner">
-          <div
-            className={`h-3 rounded-full transition-all duration-500 ${
-              isCompleted
-                ? 'bg-green-500'
-                : isFailed
-                ? 'bg-red-500'
-                : 'bg-gradient-to-r from-primary-500 to-accent-500 progress-animated'
-            }`}
-            style={{ width: `${Math.max(5, progressPercent)}%` }}
-          ></div>
-        </div>
-        <p className="text-xs font-medium text-gray-700">
-          Current Step: <span className="text-primary-600 font-semibold">{jobStatus.current_step || 'Initializing...'}</span>
+    <div className="card space-y-8">
+      <div className="text-center space-y-1.5">
+        <h2 className="text-xl font-extrabold text-ink-900">
+          {isFailed ? 'Processing hit a snag' : isCompleted ? 'Your material is ready' : 'Building verified knowledge...'}
+        </h2>
+        <p className="text-sm text-ink-500">
+          {isFailed
+            ? 'We could not finish processing this source.'
+            : isCompleted
+            ? 'All modalities extracted, cross-verified, and indexed.'
+            : 'Extracting, verifying, and linking evidence across every modality.'}
         </p>
       </div>
 
-      {/* Error Message */}
+      <div className="space-y-2">
+        <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+          <div
+            className={`h-2.5 rounded-full transition-all duration-500 ${
+              isFailed ? 'bg-red-500' : isCompleted ? 'bg-green-500' : 'bg-primary-500 progress-animated'
+            }`}
+            style={{ width: `${Math.max(4, progressPercent)}%` }}
+          />
+        </div>
+        <div className="flex justify-between text-xs text-ink-500">
+          <span>{jobStatus.current_step || 'Initializing...'}</span>
+          <span className="font-mono font-semibold">{progressPercent}%</span>
+        </div>
+      </div>
+
       {isFailed && (
-        <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-800 text-xs space-y-1">
-          <p className="font-bold flex items-center space-x-1">
-            <AlertTriangle className="w-4 h-4 text-red-600 inline mr-1" />
-            <span>Processing Failed</span>
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs space-y-1">
+          <p className="font-bold flex items-center gap-1.5">
+            <AlertTriangle className="w-4 h-4" />
+            Processing failed
           </p>
           <p className="font-mono text-red-700">{jobStatus.error || 'An unexpected error occurred.'}</p>
         </div>
       )}
 
-      {/* Step Breakdown */}
-      <div className="space-y-2">
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Pipeline Steps</p>
-        <div className="space-y-1.5">
-          {STEPS.map((step, idx) => {
-            const isDone = isCompleted || progressPercent > (idx + 1) * 14
-            const isCurrent = jobStatus.current_step && jobStatus.current_step.includes(step.key.split(' ')[0])
-            return (
+      {/* Visual step timeline */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-y-5 gap-x-2">
+        {STEPS.map((step, idx) => {
+          const done = isCompleted || idx < activeStepIndex
+          const current = !isCompleted && idx === activeStepIndex && !isFailed
+          return (
+            <div key={step.label} className="flex flex-col items-center text-center gap-2">
               <div
-                key={step.key}
-                className={`flex items-center space-x-3 px-3 py-2 rounded-lg text-xs transition-colors ${
-                  isDone
-                    ? 'bg-green-50 text-green-900 font-medium'
-                    : isCurrent
-                    ? 'bg-primary-50 text-primary-900 border border-primary-200 font-semibold'
-                    : 'bg-gray-50 text-gray-400'
+                className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 border-2 ${
+                  done
+                    ? 'bg-green-500 border-green-500 text-white'
+                    : current
+                    ? 'bg-primary-50 border-primary-500 text-primary-600'
+                    : 'bg-gray-50 border-gray-200 text-gray-300'
                 }`}
               >
-                {isDone ? (
-                  <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
-                ) : isCurrent ? (
-                  <Loader2 className="w-4 h-4 text-primary-600 animate-spin flex-shrink-0" />
+                {done ? (
+                  <CheckCircle2 className="w-4 h-4" />
+                ) : current ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
-                  <Clock className="w-4 h-4 text-gray-300 flex-shrink-0" />
+                  <Clock className="w-4 h-4" />
                 )}
-                <span>{step.label}</span>
               </div>
-            )
-          })}
-        </div>
+              <span className={`text-[11px] leading-tight ${done || current ? 'text-ink-800 font-medium' : 'text-ink-400'}`}>
+                {step.label}
+              </span>
+            </div>
+          )
+        })}
       </div>
 
-      {/* Complete Action Buttons */}
       {isCompleted && (
         <div className="pt-4 border-t border-gray-100 flex flex-col sm:flex-row gap-3">
           <Link
-            to={`/chat/${sourceId}`}
-            className="flex-1 btn-primary py-2.5 flex items-center justify-center space-x-2 text-sm font-semibold shadow-sm"
+            to={`/source/${sourceId}`}
+            className="flex-1 btn-primary py-2.5 flex items-center justify-center gap-2 text-sm font-semibold"
           >
-            <span>Start Learning with AI Chat</span>
+            <span>Start Learning</span>
             <ArrowRight className="w-4 h-4" />
           </Link>
           <Link
             to={`/knowledge/${sourceId}`}
-            className="btn-secondary py-2.5 px-4 flex items-center justify-center space-x-2 text-sm font-medium"
+            className="btn-secondary py-2.5 px-4 flex items-center justify-center gap-2 text-sm font-medium"
           >
             <FileCheck className="w-4 h-4" />
-            <span>View VKEG Knowledge Graph</span>
+            <span>View Knowledge Units</span>
           </Link>
         </div>
       )}

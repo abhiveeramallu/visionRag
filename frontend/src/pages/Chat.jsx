@@ -1,30 +1,45 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useParams } from 'react'
-import { querySource, getSource } from '../services/api'
+import { useParams } from 'react-router-dom'
+import { querySource, getSource, getSources } from '../services/api'
 import MessageBubble from '../components/MessageBubble'
-import { Send, Loader2, Sparkles, MessageSquare, Bot, HelpCircle } from 'lucide-react'
+import RetrievalStrategyPanel from '../components/RetrievalStrategyPanel'
+import ConflictCompare from '../components/ConflictCompare'
+import { Send, Loader2, MessageSquare } from 'lucide-react'
+
+const EXAMPLE_QUESTIONS = [
+  'Explain this lecture in simple terms.',
+  'What formula did the professor derive?',
+  'Where was backpropagation explained?',
+  'Compare supervised and unsupervised learning.',
+  'What mistakes did the instructor correct?',
+  'Give me the important topics for the exam.',
+]
 
 export default function Chat() {
   const { sourceId } = useParams()
   const [source, setSource] = useState(null)
-  const [messages, setMessages] = useState([
-    {
-      role: 'assistant',
-      content:
-        'Hello! I am VisionRAG-X. Ask me any question about your educational material. All answers will be grounded in verified evidence with timestamp/page citations.',
-      evidence: [],
-      conflicts: [],
-      confidence: 1.0,
-    },
-  ])
+  const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const messagesEndRef = useRef(null)
 
+  const [activeSourceId, setActiveSourceId] = useState(sourceId || null)
+
   useEffect(() => {
     if (sourceId) {
+      setActiveSourceId(sourceId)
       getSource(sourceId)
         .then((data) => setSource(data))
+        .catch(() => {})
+    } else {
+      getSources()
+        .then((sources) => {
+          const completed = sources.find((s) => s.status === 'completed') || sources[0]
+          if (completed) {
+            setActiveSourceId(completed.id)
+            setSource(completed)
+          }
+        })
         .catch(() => {})
     }
   }, [sourceId])
@@ -43,7 +58,7 @@ export default function Chat() {
     setLoading(true)
 
     try {
-      const res = await querySource(sourceId, text)
+      const res = await querySource(activeSourceId || sourceId, text)
       const botMsg = {
         role: 'assistant',
         content: res.answer,
@@ -67,71 +82,71 @@ export default function Chat() {
     }
   }
 
-  const handleQuickQuestion = (qText) => {
-    handleSend(qText)
-  }
+  const handleTimestampClick = () => {}
 
-  const handleTimestampClick = (seconds) => {
-    alert(`Timestamp clicked: ${seconds} seconds. (In full deployment, this will seek the video player)`)
-  }
+  const currentId = sourceId || activeSourceId
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)] max-w-4xl mx-auto">
-      {/* Source Info Header */}
-      {source && (
-        <div className="bg-white border border-gray-200 rounded-xl p-3 px-4 mb-4 flex items-center justify-between shadow-xs">
-          <div className="flex items-center space-x-2">
-            <MessageSquare className="w-4 h-4 text-primary-600" />
-            <span className="text-xs font-bold text-gray-900">{source.title || 'Educational Material'}</span>
-            <span className="badge bg-primary-50 text-primary-700 text-[10px] uppercase font-mono">
-              {source.source_type}
-            </span>
-          </div>
-          <span className="text-xs text-gray-400 font-mono">Source ID: {sourceId.slice(0, 8)}...</span>
-        </div>
-      )}
+      <div className="mb-4">
+        <h1 className="text-xl font-extrabold text-ink-900 flex items-center gap-2">
+          <MessageSquare className="w-5 h-5 text-primary-600" />
+          Ask your knowledge base
+        </h1>
+        {source && (
+          <p className="text-xs text-ink-500 mt-1">
+            {source.title || 'Educational Material'}
+            {currentId && <span className="text-ink-300"> &middot; {currentId.slice(0, 8)}</span>}
+          </p>
+        )}
+      </div>
 
-      {/* Messages Scroll Area */}
-      <div className="flex-1 overflow-y-auto px-2 space-y-4">
+      <div className="flex-1 overflow-y-auto px-1 space-y-3">
+        {messages.length === 0 && (
+          <div className="grid sm:grid-cols-2 gap-2 pb-2">
+            {EXAMPLE_QUESTIONS.map((q) => (
+              <button
+                key={q}
+                onClick={() => handleSend(q)}
+                className="text-left text-xs bg-white border border-gray-200 text-ink-700 px-3.5 py-2.5 rounded-xl hover:border-primary-400 hover:bg-primary-50/50 transition-colors"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
+
         {messages.map((msg, idx) => (
-          <MessageBubble key={idx} message={msg} onTimestampClick={handleTimestampClick} />
+          <div key={idx} className="space-y-2">
+            <MessageBubble message={msg} onTimestampClick={handleTimestampClick} />
+            {msg.role === 'assistant' && msg.evidence?.length > 0 && (
+              <div className="max-w-3xl ml-12">
+                <RetrievalStrategyPanel strategyUsed={msg.strategy} />
+              </div>
+            )}
+            {msg.role === 'assistant' && msg.conflicts?.length > 0 && (
+              <div className="max-w-3xl ml-12">
+                <ConflictCompare conflict={msg.conflicts[0]} />
+              </div>
+            )}
+          </div>
         ))}
 
         {loading && (
-          <div className="flex items-center space-x-3 text-gray-500 text-xs py-3 px-4 bg-white border border-gray-200 rounded-2xl max-w-xs animate-pulse">
+          <div className="flex items-center gap-3 text-ink-500 text-xs py-3 px-4 bg-white border border-gray-200 rounded-2xl max-w-xs">
             <Loader2 className="w-4 h-4 animate-spin text-primary-600" />
-            <span>Executing RAG & verified citation search...</span>
+            <span>Searching verified knowledge...</span>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Quick Suggestion Chips */}
-      <div className="pt-2 pb-2 flex flex-wrap gap-2">
-        {[
-          'Summarize main topics',
-          'What are the key formulas?',
-          'Where is time complexity explained?',
-          'What are the main definitions?',
-        ].map((chip, idx) => (
-          <button
-            key={idx}
-            onClick={() => handleQuickQuestion(chip)}
-            disabled={loading}
-            className="text-xs bg-white border border-gray-200 text-gray-700 px-3 py-1 rounded-full hover:border-primary-400 hover:text-primary-600 transition-colors shadow-2xs font-medium"
-          >
-            💡 {chip}
-          </button>
-        ))}
-      </div>
-
-      {/* Input Box */}
       <form
         onSubmit={(e) => {
           e.preventDefault()
           handleSend()
         }}
-        className="relative flex items-center mt-1"
+        className="relative flex items-center mt-3"
       >
         <input
           type="text"
@@ -146,7 +161,7 @@ export default function Chat() {
           disabled={!input.trim() || loading}
           className="absolute right-2 p-2 bg-primary-600 text-white rounded-xl hover:bg-primary-700 disabled:opacity-40 transition-colors shadow-xs"
         >
-          <Send className="w-4 h-4" />
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
         </button>
       </form>
     </div>

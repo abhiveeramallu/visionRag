@@ -51,9 +51,9 @@ export default function FlashCard({ card, cardNumber, total, onNext, onPrev }) {
           </div>
 
           {/* Back */}
-          <div className="card-face card-back absolute inset-0 card flex flex-col justify-between p-8 border-2 border-accent-200 shadow-md bg-gradient-to-b from-white to-accent-50/30 rounded-2xl">
+          <div className="card-face card-back absolute inset-0 card flex flex-col justify-between p-8 border-2 border-primary-200 shadow-md bg-gradient-to-b from-white to-primary-50/40 rounded-2xl">
             <div className="flex justify-between items-start">
-              <span className="text-xs font-bold uppercase tracking-wider text-accent-700 bg-accent-100 px-2.5 py-1 rounded-md">
+              <span className="text-xs font-bold uppercase tracking-wider text-primary-700 bg-primary-100 px-2.5 py-1 rounded-md">
                 Verified Answer
               </span>
               <RotateCw className="w-4 h-4 text-gray-400" />

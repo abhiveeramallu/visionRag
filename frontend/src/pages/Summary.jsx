@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { useParams } from 'react'
-import { getSummary } from '../services/api'
+import { useParams } from 'react-router-dom'
+import { getSummary, getSources } from '../services/api'
 import { FileText, Copy, Download, Loader2, Sparkles, Check } from 'lucide-react'
 
 export default function Summary() {
@@ -11,10 +11,14 @@ export default function Summary() {
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  const [activeSourceId, setActiveSourceId] = useState(sourceId || null)
+
   const fetchSummary = async (type = activeType, topic = topicInput) => {
+    const targetId = sourceId || activeSourceId
+    if (!targetId) return
     setLoading(true)
     try {
-      const res = await getSummary(sourceId, type, topic || null)
+      const res = await getSummary(targetId, type, topic || null)
       setSummaryData(res)
     } catch (err) {
       console.error(err)
@@ -25,7 +29,17 @@ export default function Summary() {
 
   useEffect(() => {
     if (sourceId) {
+      setActiveSourceId(sourceId)
       fetchSummary('overall')
+    } else {
+      getSources()
+        .then((sources) => {
+          const completed = sources.find((s) => s.status === 'completed') || sources[0]
+          if (completed) {
+            setActiveSourceId(completed.id)
+          }
+        })
+        .catch(() => {})
     }
   }, [sourceId])
 
@@ -38,12 +52,13 @@ export default function Summary() {
   }
 
   const handleDownload = () => {
+    const currentId = sourceId || activeSourceId || ''
     if (summaryData?.content) {
       const blob = new Blob([summaryData.content], { type: 'text/markdown' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `summary-${activeType}-${sourceId.slice(0, 6)}.md`
+      a.download = `summary-${activeType}-${currentId.slice(0, 6)}.md`
       a.click()
       URL.revokeObjectURL(url)
     }
@@ -91,7 +106,7 @@ export default function Summary() {
             activeType === 'overall' ? 'bg-white text-gray-900 shadow-xs' : 'text-gray-600 hover:text-gray-900'
           }`}
         >
-          Overall Summary
+          Quick Summary
         </button>
 
         <button
@@ -102,7 +117,7 @@ export default function Summary() {
             activeType === 'topic' ? 'bg-white text-gray-900 shadow-xs' : 'text-gray-600 hover:text-gray-900'
           }`}
         >
-          Topic Summary
+          Topic-wise Summary
         </button>
 
         <button
@@ -114,7 +129,7 @@ export default function Summary() {
             activeType === 'timestamped' ? 'bg-white text-gray-900 shadow-xs' : 'text-gray-600 hover:text-gray-900'
           }`}
         >
-          Timestamped Summary
+          Exam Revision Summary
         </button>
       </div>
 

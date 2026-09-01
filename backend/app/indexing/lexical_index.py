@@ -63,7 +63,7 @@ class LexicalIndex:
             self._bm25 = None
             return
         from rank_bm25 import BM25Okapi
-        corpus = [_tokenize(u.get('content', '')) for u in self._units]
+        corpus = [_tokenize(u.get('content', '')) or ['text'] for u in self._units]
         self._bm25 = BM25Okapi(corpus)
 
     def build_index(self, units: List[Dict[str, Any]]) -> None:

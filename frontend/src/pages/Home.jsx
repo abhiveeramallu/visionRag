@@ -1,156 +1,209 @@
-import React from 'react'
-import { Link } from 'react-router-dom'
+import React, { useState, useEffect, useRef } from 'react'
+import { useNavigate, Link } from 'react-router-dom'
 import {
-  Upload, Youtube, FileVideo, Music, FileText,
-  AlertTriangle, ShieldCheck, Database, Layers,
-  HelpCircle, Sparkles, ArrowRight, BookOpen
+  Upload, Youtube, FileVideo, Music, FileText, Layers, Image as ImageIcon,
+  ArrowRight, Loader2, AlertCircle,
 } from 'lucide-react'
+import { getSources, uploadFile, ingestYouTube } from '../services/api'
+import { mockSources } from '../data/mockData'
+import SourceCard from '../components/SourceCard'
+import DemoDataBadge from '../components/DemoDataBadge'
+import VerificationPipeline from '../components/VerificationPipeline'
 
-export default function Home() {
+const MAX_HOME_SOURCES = 5
+
+const FORMATS = [
+  { icon: Youtube, label: 'YouTube', color: 'text-red-600 bg-red-50' },
+  { icon: FileVideo, label: 'Video', color: 'text-purple-600 bg-purple-50' },
+  { icon: Music, label: 'Audio', color: 'text-blue-600 bg-blue-50' },
+  { icon: FileText, label: 'PDF', color: 'text-rose-600 bg-rose-50' },
+  { icon: Layers, label: 'PPT/PPTX', color: 'text-orange-600 bg-orange-50' },
+  { icon: ImageIcon, label: 'Image', color: 'text-emerald-600 bg-emerald-50' },
+]
+
+function AddLearningMaterialCard() {
+  const navigate = useNavigate()
+  const fileInputRef = useRef(null)
+  const [dragOver, setDragOver] = useState(false)
+  const [youtubeUrl, setYoutubeUrl] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [error, setError] = useState('')
+
+  const submitFile = async (file) => {
+    setLoading(true)
+    setError('')
+    setProgress(0)
+    try {
+      const res = await uploadFile(file, (p) => setProgress(p))
+      if (res.source_id) navigate(`/processing/${res.source_id}`)
+    } catch (err) {
+      setError(err.message || 'Failed to upload file')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    setDragOver(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) submitFile(file)
+  }
+
+  const handleAnalyzeUrl = async (e) => {
+    e.preventDefault()
+    if (!youtubeUrl.trim()) return
+    setLoading(true)
+    setError('')
+    try {
+      const res = await ingestYouTube(youtubeUrl.trim())
+      if (res.source_id) navigate(`/processing/${res.source_id}`)
+    } catch (err) {
+      setError(err.message || 'Failed to analyze YouTube URL')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
-    <div className="space-y-12 py-4">
-      {/* Hero Banner */}
-      <div className="text-center space-y-4 max-w-3xl mx-auto">
-        <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-primary-50 border border-primary-200 text-primary-700 text-xs font-semibold">
-          <Sparkles className="w-3.5 h-3.5" />
-          <span>Verified Multimodal RAG Prototype</span>
-        </div>
-
-        <h1 className="text-4xl sm:text-5xl font-extrabold text-gray-900 tracking-tight leading-tight">
-          VisionRAG-X
-        </h1>
-        <p className="text-lg text-gray-600 leading-relaxed font-normal">
-          A Conflict-Aware Framework for Verified Multimodal Knowledge Retrieval from Educational Content.
-        </p>
-
-        {/* Experimental Research Disclaimer */}
-        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs text-left flex items-start space-x-3 shadow-xs">
-          <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-          <div>
-            <span className="font-bold">Research Prototype Notice: </span>
-            <span className="text-amber-800">
-              The novel contributions of VisionRAG-X (ASR+OCR extraction, cross-modal conflict detection, VKEG graph evolution, hybrid indexing, and dynamic routing) are experimental modules designed for evaluation against baselines. No scientific performance claims are implied prior to benchmark evaluation.
-            </span>
-          </div>
-        </div>
-
-        <div className="pt-4 flex justify-center space-x-4">
-          <Link
-            to="/upload"
-            className="btn-primary px-6 py-3 rounded-xl text-base font-semibold shadow-md flex items-center space-x-2"
-          >
-            <Upload className="w-5 h-5" />
-            <span>Upload Material / YouTube URL</span>
-            <ArrowRight className="w-4 h-4 ml-1" />
-          </Link>
-        </div>
-      </div>
-
-      {/* Multimodal Input Formats */}
-      <div className="space-y-4">
-        <h2 className="text-center text-xs font-bold text-gray-400 uppercase tracking-widest">
-          Supported Educational Inputs
-        </h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-          {[
-            { icon: Youtube, label: 'YouTube URLs', color: 'text-red-600 bg-red-50' },
-            { icon: FileVideo, label: 'MP4 / MKV Video', color: 'text-purple-600 bg-purple-50' },
-            { icon: Music, label: 'MP3 / WAV Audio', color: 'text-blue-600 bg-blue-50' },
-            { icon: FileText, label: 'PDF Documents', color: 'text-rose-600 bg-rose-50' },
-            { icon: Layers, label: 'PPT / PPTX Slides', color: 'text-orange-600 bg-orange-50' },
-            { icon: Sparkles, label: 'Educational Images', color: 'text-emerald-600 bg-emerald-50' },
-          ].map((item, idx) => {
-            const Icon = item.icon
+    <div className="card p-6 space-y-5">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h2 className="text-lg font-bold text-ink-900">Add Learning Material</h2>
+        <div className="flex items-center gap-2 flex-wrap">
+          {FORMATS.map((f) => {
+            const Icon = f.icon
             return (
-              <div
-                key={idx}
-                className="card p-4 text-center space-y-2 hover:border-primary-300 transition-colors flex flex-col items-center justify-center"
+              <span
+                key={f.label}
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium ${f.color}`}
               >
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${item.color}`}>
-                  <Icon className="w-5 h-5" />
-                </div>
-                <span className="text-xs font-semibold text-gray-800">{item.label}</span>
-              </div>
+                <Icon className="w-3 h-3" /> {f.label}
+              </span>
             )
           })}
         </div>
       </div>
 
-      {/* Core Research Contributions */}
-      <div className="space-y-6">
-        <div className="text-center space-y-1">
-          <h2 className="text-2xl font-bold text-gray-900">Research Novelties & Features</h2>
-          <p className="text-xs text-gray-500">Experimental modules supporting verified RAG and active student learning.</p>
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+        onDragLeave={(e) => { e.preventDefault(); setDragOver(false) }}
+        onDrop={handleDrop}
+        onClick={() => fileInputRef.current?.click()}
+        className={`border-2 border-dashed rounded-2xl py-12 px-6 text-center cursor-pointer transition-all ${
+          dragOver ? 'border-primary-500 bg-primary-50' : 'border-gray-300 hover:border-primary-400 hover:bg-gray-50'
+        }`}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          accept=".mp4,.mkv,.mp3,.wav,.pdf,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp"
+          onChange={(e) => e.target.files?.[0] && submitFile(e.target.files[0])}
+          disabled={loading}
+        />
+        <div className="w-12 h-12 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center mx-auto mb-3">
+          {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : <Upload className="w-6 h-6" />}
         </div>
-
-        <div className="grid md:grid-cols-3 gap-6">
-          <div className="card space-y-3 border-t-4 border-t-primary-600">
-            <div className="w-9 h-9 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center font-bold">
-              1
-            </div>
-            <h3 className="font-bold text-gray-900">Multimodal ASR + OCR Extraction</h3>
-            <p className="text-xs text-gray-600 leading-relaxed">
-              WhisperX speech recognition combined with PaddleOCR visual text extraction across video frames, slides, and PDFs.
-            </p>
-          </div>
-
-          <div className="card space-y-3 border-t-4 border-t-amber-500">
-            <div className="w-9 h-9 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
-              2
-            </div>
-            <h3 className="font-bold text-gray-900">Cross-Modal Conflict Detection</h3>
-            <p className="text-xs text-gray-600 leading-relaxed">
-              Experimental conflict detector identifying disagreements between spoken ASR and written OCR (e.g. O(n log n) vs O(n²)).
-            </p>
-          </div>
-
-          <div className="card space-y-3 border-t-4 border-t-purple-600">
-            <div className="w-9 h-9 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
-              3
-            </div>
-            <h3 className="font-bold text-gray-900">Verified Knowledge Graph (VKEG)</h3>
-            <p className="text-xs text-gray-600 leading-relaxed">
-              Evolutionary knowledge graph preserving history, tracking superseded formulas, and building verified lineage chains.
-            </p>
-          </div>
-
-          <div className="card space-y-3 border-t-4 border-t-blue-600">
-            <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
-              4
-            </div>
-            <h3 className="font-bold text-gray-900">Hybrid Indexing & Dynamic Routing</h3>
-            <p className="text-xs text-gray-600 leading-relaxed">
-              Combines Qdrant vector embeddings with BM25 lexical search and transparent rule-based query classification.
-            </p>
-          </div>
-
-          <div className="card space-y-3 border-t-4 border-t-emerald-600">
-            <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
-              5
-            </div>
-            <h3 className="font-bold text-gray-900">Provenance-Aware Answer Generation</h3>
-            <p className="text-xs text-gray-600 leading-relaxed">
-              LLM answers strictly cited with clickable video timestamps and page numbers, highlighting unverified or superseded facts.
-            </p>
-          </div>
-
-          <div className="card space-y-3 border-t-4 border-t-indigo-600">
-            <div className="w-9 h-9 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
-              6
-            </div>
-            <h3 className="font-bold text-gray-900">Active Learning Suite</h3>
-            <p className="text-xs text-gray-600 leading-relaxed">
-              Automatic generation of timestamped summaries, adaptive quizzes (MCQ/Fill-blank), 3D flip flashcards, and revision notes.
-            </p>
-          </div>
-        </div>
+        <p className="font-semibold text-ink-900">
+          {loading ? `Uploading... ${progress}%` : 'Drop your learning material here'}
+        </p>
+        <p className="text-sm text-ink-500 mt-1">or choose a file</p>
       </div>
 
-      {/* Footer info */}
-      <div className="text-center text-xs text-gray-400 border-t border-gray-200 pt-6 space-y-1">
-        <p>VisionRAG-X Final Year Research Project Prototype</p>
-        <p>Built with FastAPI, Qdrant, PostgreSQL, WhisperX, PaddleOCR & React</p>
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-px bg-gray-200" />
+        <span className="text-xs text-ink-400 font-medium">or</span>
+        <div className="flex-1 h-px bg-gray-200" />
       </div>
+
+      <form onSubmit={handleAnalyzeUrl} className="flex gap-2">
+        <input
+          type="url"
+          value={youtubeUrl}
+          onChange={(e) => setYoutubeUrl(e.target.value)}
+          placeholder="Paste YouTube URL..."
+          disabled={loading}
+          className="input flex-1"
+        />
+        <button
+          type="submit"
+          disabled={!youtubeUrl.trim() || loading}
+          className="btn-primary px-5 text-sm font-semibold flex items-center gap-1.5 whitespace-nowrap"
+        >
+          Analyze <ArrowRight className="w-4 h-4" />
+        </button>
+      </form>
+
+      {error && (
+        <div className="p-3 rounded-lg bg-red-50 text-red-700 border border-red-200 text-xs flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-500" />
+          <span>{error}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function Home() {
+  const [sources, setSources] = useState(null)
+  const [usingDemo, setUsingDemo] = useState(false)
+
+  useEffect(() => {
+    getSources()
+      .then((data) => {
+        const list = data || []
+        if (list.length > 0) {
+          setSources(list)
+        } else {
+          setSources(mockSources)
+          setUsingDemo(true)
+        }
+      })
+      .catch(() => {
+        setSources(mockSources)
+        setUsingDemo(true)
+      })
+  }, [])
+
+  return (
+    <div className="space-y-8 pb-8">
+      <div>
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-ink-900 tracking-tight">Good afternoon 👋</h1>
+        <p className="text-ink-500 mt-1">Continue learning from your verified knowledge.</p>
+      </div>
+
+      <AddLearningMaterialCard />
+
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-ink-900 flex items-center gap-2">
+            Your Learning Sources
+            {usingDemo && <DemoDataBadge />}
+          </h2>
+          {sources && sources.length > MAX_HOME_SOURCES && (
+            <Link to="/sources" className="text-xs font-semibold text-primary-600 hover:text-primary-700 flex items-center gap-1">
+              View all ({sources.length}) <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          )}
+        </div>
+
+        {sources === null ? (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="card h-52 animate-pulse bg-gray-100 border-0" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {sources.slice(0, MAX_HOME_SOURCES).map((s) => (
+              <SourceCard key={s.id} source={s} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <VerificationPipeline />
     </div>
   )
 }

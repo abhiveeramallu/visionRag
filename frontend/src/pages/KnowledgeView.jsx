@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { useParams } from 'react'
-import { getKnowledge, getSource } from '../services/api'
+import { useParams } from 'react-router-dom'
+import { getKnowledge, getSource, getSources } from '../services/api'
 import { Database, Filter, AlertTriangle, ShieldCheck, Clock, FileText, CheckCircle2 } from 'lucide-react'
 import ConflictBadge from '../components/ConflictBadge'
 
@@ -12,18 +12,32 @@ export default function KnowledgeView() {
   const [modalityFilter, setModalityFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
 
+  const [activeSourceId, setActiveSourceId] = useState(sourceId || null)
+
   useEffect(() => {
-    if (sourceId) {
+    const targetId = sourceId || activeSourceId
+    if (targetId) {
       setLoading(true)
-      Promise.all([getSource(sourceId), getKnowledge(sourceId)])
+      Promise.all([getSource(targetId), getKnowledge(targetId)])
         .then(([srcData, kuData]) => {
           setSource(srcData)
           setUnits(kuData || [])
         })
         .catch((err) => console.error(err))
         .finally(() => setLoading(false))
+    } else {
+      getSources()
+        .then((sources) => {
+          const completed = sources.find((s) => s.status === 'completed') || sources[0]
+          if (completed) {
+            setActiveSourceId(completed.id)
+          } else {
+            setLoading(false)
+          }
+        })
+        .catch(() => setLoading(false))
     }
-  }, [sourceId])
+  }, [sourceId, activeSourceId])
 
   const filteredUnits = units.filter((u) => {
     if (modalityFilter !== 'all' && u.modality !== modalityFilter) return false

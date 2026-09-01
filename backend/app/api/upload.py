@@ -72,18 +72,19 @@ async def run_ingestion_pipeline(
     7. Embedding + Qdrant indexing
     8. Update job to completed
     """
-    from app.database.postgres import AsyncSessionLocal
+    from app.database.postgres import async_session as AsyncSessionLocal
 
     settings = get_settings()
 
     async with AsyncSessionLocal() as db:
         try:
+            logger.info('Starting ingestion pipeline for source %s (type=%s)', source_id, source_type)
             # --- Step 1: Download / prepare ---
             await _update_job(db, job_id, status='processing', current_step='Downloading', progress=0.05)
 
             if source_type == 'youtube' and youtube_url:
                 from app.ingestion.youtube import YouTubeIngester
-                ingester = YouTubeIngester(settings)
+                ingester = YouTubeIngester()
                 output_dir = Path(settings.upload_dir) / source_id
                 output_dir.mkdir(parents=True, exist_ok=True)
                 dl = await ingester.download(youtube_url, output_dir)
@@ -111,7 +112,7 @@ async def run_ingestion_pipeline(
             if source_type in ('video', 'youtube'):
                 await _update_job(db, job_id, current_step='Extracting audio and frames', progress=0.15)
                 from app.ingestion.video import VideoIngester
-                vi = VideoIngester(settings)
+                vi = VideoIngester()
                 frames_dir = Path(settings.frames_dir) / source_id
                 frames_dir.mkdir(parents=True, exist_ok=True)
                 audio_path = await vi.extract_audio(Path(file_path), frames_dir)
@@ -121,7 +122,7 @@ async def run_ingestion_pipeline(
             elif source_type == 'audio':
                 await _update_job(db, job_id, current_step='Preparing audio', progress=0.15)
                 from app.ingestion.audio import AudioIngester
-                ai = AudioIngester(settings)
+                ai = AudioIngester()
                 audio_out = Path(settings.processed_dir) / source_id
                 audio_out.mkdir(parents=True, exist_ok=True)
                 audio_path = await ai.prepare_audio(Path(file_path), audio_out)
@@ -148,31 +149,92 @@ async def run_ingestion_pipeline(
                     ocr_extractor = OCRExtractor(settings)
                     if frames:
                         ocr_segments = await ocr_extractor.extract_from_frame_list(frames, source_id)
-                    elif source_type in ('pdf', 'ppt'):
-                        # OCR is run on extracted page images in the next step
+                    elif source_type in ('pdf', 'ppt', 'image'):
                         pass
                 except Exception as e:
                     logger.warning('OCR failed (not fatal): %s', e)
 
-            # Handle PDF/PPT text extraction
+            # Handle PDF/PPT/Image text extraction
+            formula_segments = []
+            code_segments = []
             if source_type == 'pdf':
                 await _update_job(db, job_id, current_step='Extracting PDF text', progress=0.45)
                 from app.ingestion.pdf import PDFIngester
-                pdf_ingester = PDFIngester(settings)
+                from app.extraction.formula import FormulaExtractor
+                from app.extraction.code_parser import CodeParser
+                pdf_ingester = PDFIngester()
+                formula_extractor = FormulaExtractor()
+                code_parser = CodeParser()
                 out_dir = Path(settings.processed_dir) / source_id
                 out_dir.mkdir(parents=True, exist_ok=True)
                 pages = await pdf_ingester.extract(Path(file_path), out_dir)
+
+                has_page_images = any(page['images'] for page in pages)
+                ocr_extractor = None
+                if has_page_images:
+                    await _update_job(db, job_id, current_step='Running OCR', progress=0.50)
+                    try:
+                        from app.extraction.ocr import OCRExtractor
+                        ocr_extractor = OCRExtractor(settings)
+                    except Exception as e:
+                        logger.warning('OCR extractor init failed (not fatal): %s', e)
+
+                total_images = sum(len(page['images']) for page in pages)
+                images_done = 0
+
                 for page in pages:
+                    page_num = page['page_num']
+                    page_text = page['text']
                     asr_segments.append({
-                        'text': page['text'], 'start': None, 'end': None,
+                        'text': page_text, 'start': None, 'end': None,
                         'confidence': 0.95, 'modality': 'text',
-                        'source_id': source_id, 'page': page['page_num'],
+                        'source_id': source_id, 'page': page_num,
                         'timestamp_start': None, 'timestamp_end': None
                     })
+
+                    for match in formula_extractor.extract_from_text(page_text):
+                        formula_segments.append({
+                            'text': match, 'confidence': 0.75, 'modality': 'formula',
+                            'source_id': source_id, 'page': page_num,
+                            'timestamp_start': None, 'timestamp_end': None,
+                        })
+
+                    for block in code_parser.extract_code_blocks(page_text):
+                        code_segments.append({
+                            'text': block['code'], 'confidence': block['confidence'],
+                            'modality': 'code', 'source_id': source_id, 'page': page_num,
+                            'timestamp_start': None, 'timestamp_end': None,
+                            'language': block['language'],
+                        })
+
+                    if ocr_extractor and page['images']:
+                        for img in page['images']:
+                            try:
+                                img_ocr = await ocr_extractor.extract_from_image(
+                                    Path(img['image_path']), source_id, page=page_num
+                                )
+                                for seg in img_ocr:
+                                    ocr_segments.append({
+                                        'text': seg['text'], 'start': None, 'end': None,
+                                        'confidence': seg.get('confidence', 0.85), 'modality': 'ocr',
+                                        'source_id': source_id, 'page': page_num,
+                                        'timestamp_start': None, 'timestamp_end': None,
+                                    })
+                            except Exception as e:
+                                logger.warning('PDF page image OCR failed (not fatal): %s', e)
+                            finally:
+                                images_done += 1
+                                if total_images:
+                                    ocr_progress = 0.50 + 0.15 * (images_done / total_images)
+                                    await _update_job(
+                                        db, job_id,
+                                        current_step=f'Running OCR ({images_done}/{total_images} images)',
+                                        progress=ocr_progress,
+                                    )
             elif source_type == 'ppt':
                 await _update_job(db, job_id, current_step='Extracting PPT text', progress=0.45)
                 from app.ingestion.ppt import PPTIngester
-                ppt_ingester = PPTIngester(settings)
+                ppt_ingester = PPTIngester()
                 out_dir = Path(settings.processed_dir) / source_id
                 out_dir.mkdir(parents=True, exist_ok=True)
                 slides = await ppt_ingester.extract(Path(file_path), out_dir)
@@ -183,6 +245,21 @@ async def run_ingestion_pipeline(
                         'source_id': source_id, 'page': slide['slide_num'],
                         'timestamp_start': None, 'timestamp_end': None
                     })
+            elif source_type == 'image':
+                await _update_job(db, job_id, current_step='Running OCR on image', progress=0.45)
+                try:
+                    from app.extraction.ocr import OCRExtractor
+                    ocr_extractor = OCRExtractor(settings)
+                    image_ocr = await ocr_extractor.extract_from_image(Path(file_path), source_id, page=1)
+                    for seg in image_ocr:
+                        asr_segments.append({
+                            'text': seg['text'], 'start': None, 'end': None,
+                            'confidence': seg.get('confidence', 0.9), 'modality': 'ocr',
+                            'source_id': source_id, 'page': 1,
+                            'timestamp_start': None, 'timestamp_end': None
+                        })
+                except Exception as e:
+                    logger.warning('Image OCR failed: %s', e)
 
             # --- Step 5: Alignment ---
             await _update_job(db, job_id, current_step='Aligning modalities', progress=0.65)
@@ -205,6 +282,8 @@ async def run_ingestion_pipeline(
                     ocr_segments=ocr_segments,
                     total_pages=max((s.get('page', 1) or 1) for s in asr_segments) if asr_segments else 1,
                     doc_type=source_type,
+                    formula_segments=formula_segments,
+                    code_segments=code_segments,
                 )
 
             # --- Step 6: Create knowledge units ---
@@ -237,7 +316,13 @@ async def run_ingestion_pipeline(
                     window,
                     all_conflicts,
                 )
-                primary_modality = (window.get('asr_segments') or window.get('ocr_segments') or [{}])[0].get('modality', 'text')
+                primary_modality = (
+                    window.get('code_segments')
+                    or window.get('formula_segments')
+                    or window.get('ocr_segments')
+                    or window.get('asr_segments')
+                    or [{}]
+                )[0].get('modality', 'text')
 
                 ku = KnowledgeUnit(
                     id=ku_id,

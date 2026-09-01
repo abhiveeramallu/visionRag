@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
-import { useParams } from 'react'
-import { generateQuiz } from '../services/api'
+import React, { useState, useEffect } from 'react'
+import { useParams } from 'react-router-dom'
+import { generateQuiz, getSources } from '../services/api'
 import QuizCard from '../components/QuizCard'
 import { HelpCircle, Loader2, Sparkles, Trophy, RotateCcw } from 'lucide-react'
 
@@ -16,13 +16,30 @@ export default function Quiz() {
   const [score, setScore] = useState(0)
   const [completed, setCompleted] = useState(false)
 
+  const [activeSourceId, setActiveSourceId] = useState(sourceId || null)
+
+  useEffect(() => {
+    if (sourceId) {
+      setActiveSourceId(sourceId)
+    } else {
+      getSources()
+        .then((sources) => {
+          const completed = sources.find((s) => s.status === 'completed') || sources[0]
+          if (completed) setActiveSourceId(completed.id)
+        })
+        .catch(() => {})
+    }
+  }, [sourceId])
+
   const handleGenerate = async () => {
+    const targetId = sourceId || activeSourceId
+    if (!targetId) return
     setLoading(true)
     setCompleted(false)
     setCurrentIndex(0)
     setScore(0)
     try {
-      const res = await generateQuiz(sourceId, quizType, difficulty, numQuestions, topic || null)
+      const res = await generateQuiz(targetId, quizType, difficulty, numQuestions, topic || null)
       setQuizData(res)
     } catch (err) {
       console.error(err)

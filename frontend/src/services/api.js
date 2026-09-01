@@ -35,6 +35,7 @@ export const uploadFile = (file, onProgress) => {
 }
 
 export const getStatus = (sourceId) => api.get(`/status/${sourceId}`)
+export const getSources = () => api.get('/sources')
 export const getSource = (sourceId) => api.get(`/source/${sourceId}`)
 export const getKnowledge = (sourceId) => api.get(`/knowledge/${sourceId}`)
 

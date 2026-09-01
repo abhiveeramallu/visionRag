@@ -48,6 +48,9 @@ async_session: async_sessionmaker[AsyncSession] = async_sessionmaker(
     autoflush=False,
 )
 
+AsyncSessionLocal = async_session
+
+
 
 # ---------------------------------------------------------------------------
 # Declarative base (imported by all ORM models)

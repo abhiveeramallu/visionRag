@@ -157,9 +157,9 @@ class VectorIndex:
         )
         return [
             {
-                'unit_id': r.payload.get('knowledge_unit_id', ''),
-                'score': r.score,
-                'payload': r.payload,
+                'unit_id': r['payload'].get('knowledge_unit_id', ''),
+                'score': r['score'],
+                'payload': r['payload'],
             }
             for r in results
         ]

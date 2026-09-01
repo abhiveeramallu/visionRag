@@ -56,7 +56,7 @@ class OCRExtractor:
             from paddleocr import PaddleOCR
             lang = getattr(self.settings, "ocr_language", "en")
             logger.info("Loading PaddleOCR model (lang=%s)", lang)
-            self._model = PaddleOCR(use_angle_cls=True, lang=lang, show_log=False)
+            self._model = PaddleOCR(use_angle_cls=False, lang=lang, show_log=False)
             logger.info("PaddleOCR model loaded successfully")
 
     # ------------------------------------------------------------------ #

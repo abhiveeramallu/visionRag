@@ -83,8 +83,12 @@ class TimestampAligner:
         text_segments: List[dict],
         ocr_segments: List[dict],
         total_pages: int,
-        doc_type: str = 'pdf'
+        doc_type: str = 'pdf',
+        formula_segments: Optional[List[dict]] = None,
+        code_segments: Optional[List[dict]] = None,
     ) -> List[dict]:
+        formula_segments = formula_segments or []
+        code_segments = code_segments or []
         windows = {}
         
         for page_num in range(1, total_pages + 1):
@@ -100,27 +104,25 @@ class TimestampAligner:
                 'ocr_segments': [],
                 'vision_segments': [],
                 'formula_segments': [],
-                'code_segments': text_segments  # text segments across all pages initially
+                'code_segments': [],
             }
-        
-        # Assign text segments to pages
-        for seg in text_segments:
-            page = seg.get('page')
-            if page:
-                w_id = self._get_page_window_id(source_id, page)
-                if w_id in windows:
-                    windows[w_id]['code_segments'] = []
-                    windows[w_id]['asr_segments'].append(seg)  # treat as primary text
-        
-        for seg in ocr_segments:
-            page = seg.get('page')
-            if page:
-                w_id = self._get_page_window_id(source_id, page)
-                if w_id in windows:
-                    windows[w_id]['ocr_segments'].append(seg)
-        
+
+        def assign(segments, key):
+            for seg in segments:
+                page = seg.get('page')
+                if page:
+                    w_id = self._get_page_window_id(source_id, page)
+                    if w_id in windows:
+                        windows[w_id][key].append(seg)
+
+        assign(text_segments, 'asr_segments')  # treat page text as primary text
+        assign(ocr_segments, 'ocr_segments')
+        assign(formula_segments, 'formula_segments')
+        assign(code_segments, 'code_segments')
+
         non_empty = [w for w in windows.values()
-                     if any(w[k] for k in ['asr_segments', 'ocr_segments'])]
+                     if any(w[k] for k in ['asr_segments', 'ocr_segments',
+                                            'formula_segments', 'code_segments'])]
         logger.info(f'Created {len(non_empty)} page windows for {doc_type}')
         return non_empty
     

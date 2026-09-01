@@ -138,6 +138,25 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get('/api/sources')
+async def list_sources(db: AsyncSession = Depends(get_db)):
+    """List all ingested sources, ordered by latest created."""
+    result = await db.execute(
+        select(Source).order_by(Source.created_at.desc()).limit(20)
+    )
+    sources = result.scalars().all()
+    return [
+        {
+            'id': s.id,
+            'title': s.title,
+            'source_type': s.source_type,
+            'status': s.status,
+            'created_at': s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in sources
+    ]
+
+
 @router.get('/api/source/{source_id}')
 async def get_source(source_id: str, db: AsyncSession = Depends(get_db)):
     """Get metadata for a specific source."""

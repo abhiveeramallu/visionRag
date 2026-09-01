@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
-import { useParams } from 'react'
-import { generateNotes } from '../services/api'
+import React, { useState, useEffect } from 'react'
+import { useParams } from 'react-router-dom'
+import { generateNotes, getSources } from '../services/api'
 import { FileCode, Copy, Download, Loader2, Sparkles, Check } from 'lucide-react'
 
 export default function Notes() {
@@ -11,10 +11,27 @@ export default function Notes() {
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  const [activeSourceId, setActiveSourceId] = useState(sourceId || null)
+
+  useEffect(() => {
+    if (sourceId) {
+      setActiveSourceId(sourceId)
+    } else {
+      getSources()
+        .then((sources) => {
+          const completed = sources.find((s) => s.status === 'completed') || sources[0]
+          if (completed) setActiveSourceId(completed.id)
+        })
+        .catch(() => {})
+    }
+  }, [sourceId])
+
   const handleGenerate = async () => {
+    const targetId = sourceId || activeSourceId
+    if (!targetId) return
     setLoading(true)
     try {
-      const res = await generateNotes(sourceId, notesType, topic || null)
+      const res = await generateNotes(targetId, notesType, topic || null)
       setNotesData(res)
     } catch (err) {
       console.error(err)
@@ -32,12 +49,13 @@ export default function Notes() {
   }
 
   const handleDownload = () => {
+    const currentId = sourceId || activeSourceId || ''
     if (notesData?.content) {
       const blob = new Blob([notesData.content], { type: 'text/markdown' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `notes-${notesType}-${sourceId.slice(0, 6)}.md`
+      a.download = `notes-${notesType}-${currentId.slice(0, 6)}.md`
       a.click()
       URL.revokeObjectURL(url)
     }

@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
-import { useParams } from 'react'
-import { generateFlashcards } from '../services/api'
+import React, { useState, useEffect } from 'react'
+import { useParams } from 'react-router-dom'
+import { generateFlashcards, getSources } from '../services/api'
 import FlashCard from '../components/FlashCard'
 import { Layers, Loader2, Sparkles, Download, Shuffle } from 'lucide-react'
 
@@ -12,11 +12,28 @@ export default function Flashcards() {
   const [loading, setLoading] = useState(false)
   const [currentIndex, setCurrentIndex] = useState(0)
 
+  const [activeSourceId, setActiveSourceId] = useState(sourceId || null)
+
+  useEffect(() => {
+    if (sourceId) {
+      setActiveSourceId(sourceId)
+    } else {
+      getSources()
+        .then((sources) => {
+          const completed = sources.find((s) => s.status === 'completed') || sources[0]
+          if (completed) setActiveSourceId(completed.id)
+        })
+        .catch(() => {})
+    }
+  }, [sourceId])
+
   const handleGenerate = async () => {
+    const targetId = sourceId || activeSourceId
+    if (!targetId) return
     setLoading(true)
     setCurrentIndex(0)
     try {
-      const res = await generateFlashcards(sourceId, numCards, topic || null)
+      const res = await generateFlashcards(targetId, numCards, topic || null)
       setCardsData(res)
     } catch (err) {
       console.error(err)
@@ -34,6 +51,7 @@ export default function Flashcards() {
   }
 
   const handleDownloadCSV = () => {
+    const currentId = sourceId || activeSourceId || ''
     if (cardsData?.cards) {
       const csvContent =
         'data:text/csv;charset=utf-8,' +
@@ -47,7 +65,7 @@ export default function Flashcards() {
       const encodedUri = encodeURI(csvContent)
       const link = document.createElement('a')
       link.setAttribute('href', encodedUri)
-      link.setAttribute('download', `flashcards-${sourceId.slice(0, 6)}.csv`)
+      link.setAttribute('download', `flashcards-${currentId.slice(0, 6)}.csv`)
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
