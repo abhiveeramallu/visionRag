@@ -153,7 +153,19 @@ class YouTubeIngester:
 
         def _download_video():
             ydl_opts = {
-                "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                # Prefer H.264 (avc1) video streams over AV1/VP9 -- this
+                # environment's frame extraction (opencv/ffmpeg) has no AV1
+                # decoder available, which silently yields 0 extracted
+                # frames (and therefore 0 knowledge units) for videos
+                # YouTube serves in AV1. H.264 is universally decodable, so
+                # try it first and only fall back to "any mp4" if no H.264
+                # variant exists.
+                "format": (
+                    "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]"
+                    "/best[ext=mp4][vcodec^=avc1]"
+                    "/bestvideo[ext=mp4]+bestaudio[ext=m4a]"
+                    "/best[ext=mp4]/best"
+                ),
                 "outtmpl": video_outtmpl,
                 "writeinfojson": False,
                 "quiet": True,

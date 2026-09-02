@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import {
   Home, Library, MessageSquare, FileText, HelpCircle, Layers,
-  StickyNote, Share2, ShieldCheck, X, Loader2,
+  StickyNote, Share2, X, Loader2,
 } from 'lucide-react'
 import { getSources } from '../services/api'
 import { mockSources } from '../data/mockData'
@@ -110,30 +110,6 @@ export default function Sidebar({ open, onClose }) {
             )}
           </div>
         </nav>
-
-        <div className="flex-shrink-0 border-t border-gray-100 p-4 space-y-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-xs font-bold flex-shrink-0">
-              ST
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs font-semibold text-ink-900 truncate">Student Account</p>
-              <p className="text-[11px] text-ink-400 truncate">Guest workspace</p>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-[11px] text-ink-500">
-              <span className="flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3 text-primary-600" /> Storage
-              </span>
-              <span>2.4 GB / 10 GB</span>
-            </div>
-            <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-              <div className="bg-primary-500 h-1.5 rounded-full" style={{ width: '24%' }} />
-            </div>
-          </div>
-        </div>
       </aside>
     </>
   )

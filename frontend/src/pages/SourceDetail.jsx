@@ -23,12 +23,6 @@ const TYPE_META = {
 function MediaPanel({ source }) {
   const meta = TYPE_META[source.source_type] || TYPE_META.pdf
   const Icon = meta.icon
-  const markers = [
-    { label: 'Intro', at: 0.05 },
-    { label: 'Gradient Descent', at: 0.42, highlight: true },
-    { label: 'Backpropagation', at: 0.68 },
-    { label: 'Q&A', at: 0.92 },
-  ]
 
   return (
     <div className="card p-0 overflow-hidden flex flex-col">
@@ -53,44 +47,41 @@ function MediaPanel({ source }) {
         )}
       </div>
 
-      {(source.source_type === 'youtube' || source.source_type === 'video' || source.source_type === 'audio') && (
-        <div className="p-4 space-y-2">
-          <div className="relative h-1.5 bg-gray-200 rounded-full">
-            <div className="absolute inset-y-0 left-0 bg-primary-500 rounded-full" style={{ width: '42%' }} />
-            {markers.map((m) => (
-              <div
-                key={m.label}
-                title={m.label}
-                className={`absolute -top-1 w-3.5 h-3.5 rounded-full border-2 border-white cursor-pointer ${
-                  m.highlight ? 'bg-primary-600' : 'bg-ink-400'
-                }`}
-                style={{ left: `calc(${m.at * 100}% - 7px)` }}
-              />
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {markers.map((m) => (
-              <span
-                key={m.label}
-                className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                  m.highlight ? 'bg-primary-50 text-primary-700 border border-primary-200' : 'bg-gray-100 text-ink-500'
-                }`}
-              >
-                {m.label}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {source.source_type === 'pdf' || source.source_type === 'ppt' ? (
+      {(source.source_type === 'pdf' || source.source_type === 'ppt') && source.num_pages ? (
         <div className="p-4 flex items-center justify-between text-xs text-ink-500 border-t border-gray-100">
-          <span>Page 12 of {source.num_pages || 24}</span>
-          <span className="text-primary-600 font-medium">Evidence highlighted on this page</span>
+          <span>{source.num_pages} pages</span>
+          <span className="text-ink-400">Ask a question to jump to the cited page</span>
         </div>
       ) : null}
     </div>
   )
+}
+
+const MODALITY_LABEL = {
+  formula: 'Formula / Whiteboard',
+  ocr: 'On-screen Text (OCR)',
+  asr: 'Speech (Transcript)',
+  text: 'Document Text',
+  code: 'Code Block',
+}
+
+const STATUS_BADGE_CLASS = {
+  verified: 'badge-green',
+  active: 'badge-blue',
+  disputed: 'badge-red',
+  superseded: 'badge-gray',
+}
+
+function evidenceLocation(item) {
+  if (item.timestamp_start != null) return formatTimestamp(item.timestamp_start)
+  if (item.page != null) return `Page ${item.page}`
+  if (item.slide != null) return `Slide ${item.slide}`
+  return '—'
+}
+
+function evidenceTopic(item) {
+  const firstLine = (item.text || '').split('\n').find((l) => l.trim().length > 0) || ''
+  return firstLine.replace(/\s+/g, ' ').trim().slice(0, 80) || 'Retrieved evidence'
 }
 
 function EvidencePanel({ evidence, sourceId }) {
@@ -112,41 +103,43 @@ function EvidencePanel({ evidence, sourceId }) {
         <>
           <div className="space-y-3">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Concept</p>
-              <p className="text-base font-bold text-ink-900 mt-0.5">Gradient Descent</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Topic</p>
+              <p className="text-base font-bold text-ink-900 mt-0.5">{evidenceTopic(primary)}</p>
             </div>
 
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Formula</p>
-              <p className="font-mono text-sm text-ink-800 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mt-1">
-                θ = θ − α∇J(θ)
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Evidence Snippet</p>
+              <p className="font-mono text-xs text-ink-800 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                {primary.text}
               </p>
             </div>
 
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Source</p>
-              <p className="text-sm text-ink-700 mt-0.5">Whiteboard + Speech</p>
+              <p className="text-sm text-ink-700 mt-0.5">{MODALITY_LABEL[primary.modality] || primary.modality}</p>
             </div>
 
             <div className="flex items-center gap-4">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Timestamp</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Location</p>
                 <p className="text-sm text-ink-700 mt-0.5 flex items-center gap-1">
                   <Clock className="w-3.5 h-3.5 text-ink-400" />
-                  {formatTimestamp(primary?.timestamp_start) || '14:32'}
+                  {evidenceLocation(primary)}
                 </p>
               </div>
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Confidence</p>
                 <p className="text-sm font-semibold text-green-700 mt-0.5">
-                  {Math.round((primary?.confidence ?? 0.96) * 100)}%
+                  {Math.round((primary.confidence ?? 0) * 100)}%
                 </p>
               </div>
             </div>
 
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Status</p>
-              <span className="badge-green mt-1 inline-block">Verified</span>
+              <span className={`${STATUS_BADGE_CLASS[primary.status] || 'badge-gray'} mt-1 inline-block capitalize`}>
+                {primary.status || 'unverified'}
+              </span>
             </div>
           </div>
 
