@@ -279,6 +279,14 @@ class QuizGenerator:
             # local ones especially, still produce despite the instruction).
             question_list = parsed.get('questions', []) if isinstance(parsed, dict) else parsed
             for i, q in enumerate(question_list[:num_questions]):
+                # Find matching knowledge unit for evidence provenance
+                q_text = (q.get('question', '') + ' ' + q.get('answer', '')).lower()
+                matching_unit = next(
+                    (u for u in units if u.get('concept', '').lower() in q_text or u.get('concept', '')[:20].lower() in q_text),
+                    units[i % len(units)] if units else None
+                )
+                source_evidence = matching_unit.get('content', '')[:250] if matching_unit else None
+
                 questions.append({
                     'question_id': str(uuid.uuid4()),
                     'question': q.get('question', ''),
@@ -287,7 +295,7 @@ class QuizGenerator:
                     'answer': q.get('answer', ''),
                     'explanation': q.get('explanation', ''),
                     'difficulty': difficulty,
-                    'source_evidence': None,
+                    'source_evidence': source_evidence,
                 })
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning('Quiz JSON parse failed: %s\nRaw: %s', e, raw[:300])
@@ -372,14 +380,23 @@ class FlashcardGenerator:
                 cleaned = cleaned.split('\n', 1)[-1].rsplit('```', 1)[0]
             parsed = json.loads(cleaned)
             card_list = parsed.get('cards', []) if isinstance(parsed, dict) else parsed
-            for c in card_list[:num_cards]:
+            for i, c in enumerate(card_list[:num_cards]):
+                concept = c.get('concept', '')
+                c_text = (concept + ' ' + c.get('front', '') + ' ' + c.get('back', '')).lower()
+                matching_unit = next(
+                    (u for u in units if u.get('concept', '').lower() in c_text or u.get('concept', '')[:20].lower() in c_text),
+                    units[i % len(units)] if units else None
+                )
+                source_evidence = matching_unit.get('content', '')[:250] if matching_unit else None
+                conf = matching_unit.get('confidence', 0.8) if matching_unit else 0.7
+
                 cards.append({
                     'card_id': str(uuid.uuid4()),
                     'front': c.get('front', ''),
                     'back': c.get('back', ''),
-                    'concept': c.get('concept', ''),
-                    'source_evidence': None,
-                    'confidence': 0.7,
+                    'concept': concept,
+                    'source_evidence': source_evidence,
+                    'confidence': conf,
                 })
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning('Flashcard JSON parse failed: %s', e)

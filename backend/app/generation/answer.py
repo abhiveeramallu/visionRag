@@ -81,8 +81,14 @@ class AnswerGenerator:
         if conflicts:
             lines.append('\n=== DETECTED CONFLICTS ===\n')
             for c in conflicts:
+                if c.get('is_genuine_conflict') is False or c.get('verification_status') == 'false_positive':
+                    continue
+                if c.get('is_genuine_conflict') is True:
+                    prefix = f'⚠️ Verified Contradiction ({c.get("type", "unknown")}, severity: {c.get("severity", "?")}, status: {c.get("status", "unresolved")})'
+                else:
+                    prefix = f'ℹ️ Candidate Discrepancy (unverified candidate, type: {c.get("type", "unknown")}, severity: {c.get("severity", "?")})'
                 lines.append(
-                    f'⚠️ Conflict ({c.get("type", "unknown")}, severity: {c.get("severity", "?")})\n'
+                    f'{prefix}\n'
                     + '\n'.join(f'  - {claim}' for claim in c.get('claims', []))
                     + '\n'
                 )
@@ -101,6 +107,7 @@ class AnswerGenerator:
         evidence: List[Dict[str, Any]],
         conflicts: List[Dict[str, Any]],
         source_title: str,
+        abstain: bool = False,
     ) -> Dict[str, Any]:
         """
         Generate an answer grounded in the provided evidence.
@@ -111,7 +118,16 @@ class AnswerGenerator:
             answer         : str
             evidence_used  : List[dict]
             confidence     : float
+            abstained      : bool
         """
+        if abstain or not evidence:
+            return {
+                'answer': 'The provided educational sources do not establish this answer; insufficient evidence.',
+                'evidence_used': [],
+                'confidence': 0.0,
+                'abstained': True,
+            }
+
         context = self._build_context(evidence, conflicts)
         user_prompt = (
             f'Source material: "{source_title}"\n\n'
@@ -133,4 +149,5 @@ class AnswerGenerator:
             'answer': answer,
             'evidence_used': evidence,
             'confidence': confidence,
+            'abstained': False,
         }

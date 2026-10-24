@@ -14,7 +14,7 @@ Nodes represent KnowledgeUnits. Edges represent relationships:
 import logging
 import uuid
 from difflib import SequenceMatcher
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
 
@@ -112,6 +112,94 @@ class VEKG:
     # ------------------------------------------------------------------
     # Edge operations
     # ------------------------------------------------------------------
+
+    def reconstruct_from_units(
+        self,
+        units: List[ProcessedKnowledgeUnit],
+        conflicts: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """
+        Reconstruct the VEKG graph, version lineage edges, and conflict relationships
+        from persisted knowledge units and conflict records.
+
+        Ensures:
+        1. All units are registered as nodes and in _unit_index / _concept_index.
+        2. Version correction and superseding edges (CORRECTS / SUPERSEDES) are
+           reconstructed from previous_version_id matching the graph API direction.
+        3. Dangling previous_version_id references (pointing to non-existent units)
+           are safely detected and do not create invalid edges.
+        4. Bidirectional CONFLICTS_WITH edges are reconstructed from persisted conflict
+           records without duplicates.
+        5. Historical claims and their superseded / disputed statuses are preserved.
+        """
+        # Step 1: Add all units to graph nodes and indexes
+        for u in units:
+            self.add_unit(u)
+
+        # Step 2: Reconstruct version lineage edges (new_version -> old_version)
+        for u in units:
+            if u.previous_version_id:
+                prev_id = u.previous_version_id
+                if prev_id in self._unit_index:
+                    old_unit = self._unit_index[prev_id]
+                    relation = EDGE_CORRECTS if (u.correction_reason or old_unit.status == "superseded") else EDGE_SUPERSEDES
+                    if not self.graph.has_edge(u.id, prev_id):
+                        self.graph.add_edge(
+                            u.id,
+                            prev_id,
+                            relation=relation,
+                            reason=u.correction_reason or "Version update",
+                        )
+                else:
+                    logger.warning(
+                        "Dangling previous_version_id reference: unit %s references %s which is not in persisted units",
+                        u.id, prev_id
+                    )
+
+        # Step 3: Reconstruct conflict relationships
+        if conflicts:
+            for c in conflicts:
+                # Direct unit IDs if present
+                u_ids = c.get("unit_ids") or []
+                if len(u_ids) >= 2:
+                    u_a, u_b = u_ids[0], u_ids[1]
+                    if u_a in self._unit_index and u_b in self._unit_index:
+                        self.add_conflict(u_a, u_b, {
+                            "conflict_type": c.get("conflict_type") or c.get("type", "unknown"),
+                            "severity": c.get("severity", "medium"),
+                            "confidence": c.get("confidence", 0.5),
+                            "claims": c.get("claims", []),
+                            "resolved": bool(c.get("resolved", False)),
+                            "resolution": c.get("resolution"),
+                        })
+                        continue
+
+                # Fallback: Match units by timestamp/page proximity and concept/claim text
+                c_ts = c.get("timestamp")
+                c_page = c.get("page")
+                c_modalities = c.get("modalities") or c.get("sources") or []
+                c_claims = [str(cl).lower() for cl in c.get("claims", [])]
+
+                candidate_units = []
+                for uid, u in self._unit_index.items():
+                    ts_match = (c_ts is not None and u.timestamp_start is not None and abs(c_ts - u.timestamp_start) <= 30.0)
+                    page_match = (c_page is not None and (u.page == c_page or u.slide == c_page))
+                    modality_match = u.modality in c_modalities
+                    claim_match = any(cl in u.content.lower() or u.concept.lower() in cl for cl in c_claims)
+                    if (ts_match or page_match) and (modality_match or claim_match):
+                        candidate_units.append(u)
+
+                if len(candidate_units) >= 2:
+                    u_a = candidate_units[0]
+                    u_b = candidate_units[1]
+                    self.add_conflict(u_a.id, u_b.id, {
+                        "conflict_type": c.get("conflict_type") or c.get("type", "unknown"),
+                        "severity": c.get("severity", "medium"),
+                        "confidence": c.get("confidence", 0.5),
+                        "claims": c.get("claims", []),
+                        "resolved": bool(c.get("resolved", False)),
+                        "resolution": c.get("resolution"),
+                    })
 
     def add_conflict(
         self,

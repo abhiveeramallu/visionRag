@@ -18,6 +18,7 @@ def mock_settings():
     settings = MagicMock()
     settings.llm_provider = 'openai'
     settings.openai_api_key = ''
+    settings.is_llm_configured = MagicMock(return_value=False)
     settings.embedding_model = 'BAAI/bge-base-en-v1.5'
     settings.embedding_device = 'cpu'
     settings.whisper_model = 'base'

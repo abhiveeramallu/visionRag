@@ -1,0 +1,421 @@
+{
+  "corpus": [
+    {
+      "id": "ku_01",
+      "concept": "Merge Sort Time Complexity",
+      "content": "Merge sort divides the array recursively and merges sorted halves. Its time complexity is O(n log n) in all cases (worst, average, and best).",
+      "modality": "ocr",
+      "timestamp_start": 12.0,
+      "timestamp_end": 18.0,
+      "confidence": 0.95,
+      "status": "verified",
+      "version": 1
+    },
+    {
+      "id": "ku_02",
+      "concept": "Merge Sort Speech Slip",
+      "content": "In our initial analysis, the instructor stated that merge sort runs in O(n^2) worst case.",
+      "modality": "asr",
+      "timestamp_start": 10.0,
+      "timestamp_end": 14.0,
+      "confidence": 0.88,
+      "status": "superseded",
+      "version": 1
+    },
+    {
+      "id": "ku_03",
+      "concept": "Merge Sort Verbal Correction",
+      "content": "Excuse me, I made a mistake earlier when I said O(n^2). Merge sort is actually O(n log n) because the recurrence relation T(n) = 2T(n/2) + O(n) solves to n log n.",
+      "modality": "asr",
+      "timestamp_start": 45.0,
+      "timestamp_end": 52.0,
+      "confidence": 0.92,
+      "status": "verified",
+      "version": 2,
+      "previous_version_id": "ku_02",
+      "correction_reason": "Verbal correction by instructor correcting prior slip"
+    },
+    {
+      "id": "ku_04",
+      "concept": "Binary Search Algorithm",
+      "content": "def binary_search(arr, target):\n    low, high = 0, len(arr) - 1\n    while low <= high:\n        mid = (low + high) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            low = mid + 1\n        else:\n            high = mid - 1\n    return -1",
+      "modality": "code",
+      "timestamp_start": 60.0,
+      "timestamp_end": 75.0,
+      "confidence": 0.96,
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "ku_05",
+      "concept": "Binary Search Complexity",
+      "content": "Binary search requires a sorted array and runs in O(log n) time complexity with O(1) auxiliary space.",
+      "modality": "ocr",
+      "timestamp_start": 62.0,
+      "timestamp_end": 70.0,
+      "confidence": 0.94,
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "ku_06",
+      "concept": "Master Theorem Formula",
+      "content": "Master Theorem applies to recurrences of the form T(n) = a*T(n/b) + f(n). If f(n) = Theta(n^(log_b(a))), then T(n) = Theta(n^(log_b(a)) * log n).",
+      "modality": "formula",
+      "timestamp_start": 90.0,
+      "timestamp_end": 105.0,
+      "confidence": 0.93,
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "ku_07",
+      "concept": "Newton Second Law Slide",
+      "content": "Newton's Second Law of Motion: Net force equals mass times acceleration, written as F = m * a.",
+      "modality": "ocr",
+      "timestamp_start": 120.0,
+      "timestamp_end": 130.0,
+      "confidence": 0.98,
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "ku_08",
+      "concept": "Kinetic Energy Slide Equation",
+      "content": "Kinetic Energy of an object with mass m and velocity v is KE = 0.5 * m * v^2.",
+      "modality": "formula",
+      "timestamp_start": 140.0,
+      "timestamp_end": 150.0,
+      "confidence": 0.97,
+      "status": "verified",
+      "version": 1
+    },
+    {
+      "id": "ku_09",
+      "concept": "Kinetic Energy Spoken Discrepancy",
+      "content": "As you can see, kinetic energy is simply mass times velocity squared KE = m * v^2 without the half factor.",
+      "modality": "asr",
+      "timestamp_start": 142.0,
+      "timestamp_end": 148.0,
+      "confidence": 0.84,
+      "status": "disputed",
+      "version": 1
+    },
+    {
+      "id": "ku_10",
+      "concept": "Gradient Descent Learning Rate Diagram",
+      "content": "Visual diagram demonstrating optimization trajectories. When learning rate alpha is too large, the optimizer diverges and cost increases. When alpha is appropriate, it converges smoothly to the local minimum.",
+      "modality": "vision",
+      "timestamp_start": 180.0,
+      "timestamp_end": 195.0,
+      "confidence": 0.89,
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "ku_11",
+      "concept": "Gradient Descent Update Rule",
+      "content": "Parameter update rule: theta := theta - alpha * grad(J(theta)) where alpha is the step size or learning rate.",
+      "modality": "formula",
+      "timestamp_start": 182.0,
+      "timestamp_end": 190.0,
+      "confidence": 0.95,
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "ku_12",
+      "concept": "Breadth First Search Queue",
+      "content": "BFS explores graph vertices level by level using a FIFO Queue data structure. Its time complexity is O(V + E).",
+      "modality": "asr",
+      "timestamp_start": 210.0,
+      "timestamp_end": 225.0,
+      "confidence": 0.91,
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "ku_13",
+      "concept": "Depth First Search Stack",
+      "content": "DFS explores deeply along each branch using recursion or an explicit LIFO Stack. Time complexity is O(V + E).",
+      "modality": "ocr",
+      "timestamp_start": 230.0,
+      "timestamp_end": 245.0,
+      "confidence": 0.93,
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "ku_14",
+      "concept": "QuickSort Pivot Selection",
+      "content": "QuickSort performance depends on pivot choice. Random or median-of-three pivot avoids the O(n^2) worst case on already sorted input.",
+      "modality": "asr",
+      "timestamp_start": 260.0,
+      "timestamp_end": 275.0,
+      "confidence": 0.90,
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "ku_15",
+      "concept": "Dijkstra Algorithm Non-Negative Weights",
+      "content": "Dijkstra's shortest path algorithm requires non-negative edge weights. For graphs with negative weights, use the Bellman-Ford algorithm.",
+      "modality": "ocr",
+      "timestamp_start": 290.0,
+      "timestamp_end": 305.0,
+      "confidence": 0.96,
+      "status": "active",
+      "version": 1
+    }
+  ],
+  "conflicts": [
+    {
+      "conflict_id": "c_merge_sort",
+      "type": "complexity_disagreement",
+      "concept": "Merge Sort Time Complexity",
+      "unit_ids": ["ku_01", "ku_02", "ku_03"],
+      "sources": ["asr", "ocr"],
+      "claims": ["O(n^2) [asr]", "O(n log n) [ocr]"],
+      "timestamp": 12.0,
+      "severity": "high",
+      "confidence": 0.90,
+      "resolved": true,
+      "resolution": "Instructor corrected slip at 45.0s, confirming O(n log n)."
+    },
+    {
+      "conflict_id": "c_kinetic_energy",
+      "type": "formula_contradiction",
+      "concept": "Kinetic Energy Formula",
+      "unit_ids": ["ku_08", "ku_09"],
+      "sources": ["formula", "asr"],
+      "claims": ["KE = 0.5 * m * v^2 [formula]", "KE = m * v^2 [asr]"],
+      "timestamp": 142.0,
+      "severity": "high",
+      "confidence": 0.85,
+      "resolved": true,
+      "resolution": "Slide formula KE = 0.5 * m * v^2 is authoritative; spoken omission of 0.5 is incorrect."
+    }
+  ],
+  "questions": [
+    {
+      "id": "q01",
+      "query": "What is the time complexity of merge sort in the worst case?",
+      "query_type": "formula",
+      "relevant_unit_ids": ["ku_01", "ku_03"],
+      "expected_answer": "Merge sort runs in O(n log n) time in all cases including worst case.",
+      "gold_citations": ["ku_01", "ku_03"],
+      "is_conflict_query": true,
+      "correct_version": "v2",
+      "should_abstain": false
+    },
+    {
+      "id": "q02",
+      "query": "Show me the Python code implementation for binary search.",
+      "query_type": "code",
+      "relevant_unit_ids": ["ku_04"],
+      "expected_answer": "def binary_search(arr, target): with low, high bounds and mid calculation.",
+      "gold_citations": ["ku_04"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q03",
+      "query": "What is the formula for kinetic energy of a moving object?",
+      "query_type": "formula",
+      "relevant_unit_ids": ["ku_08"],
+      "expected_answer": "The kinetic energy formula is KE = 0.5 * m * v^2.",
+      "gold_citations": ["ku_08"],
+      "is_conflict_query": true,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q04",
+      "query": "What happens in gradient descent when the learning rate is too large?",
+      "query_type": "conceptual",
+      "relevant_unit_ids": ["ku_10", "ku_11"],
+      "expected_answer": "When the learning rate is too large, the optimizer diverges and the cost increases.",
+      "gold_citations": ["ku_10"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q05",
+      "query": "Which data structure is used by Breadth First Search?",
+      "query_type": "factual",
+      "relevant_unit_ids": ["ku_12"],
+      "expected_answer": "Breadth First Search uses a FIFO Queue data structure.",
+      "gold_citations": ["ku_12"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q06",
+      "query": "Why cannot Dijkstra's algorithm handle graphs with negative weights?",
+      "query_type": "conceptual",
+      "relevant_unit_ids": ["ku_15"],
+      "expected_answer": "Dijkstra requires non-negative edge weights; Bellman-Ford should be used for negative weights.",
+      "gold_citations": ["ku_15"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q07",
+      "query": "At what timestamp does the instructor correct the mistake regarding merge sort?",
+      "query_type": "timestamp",
+      "relevant_unit_ids": ["ku_03"],
+      "expected_answer": "The correction occurs at timestamp 45.0s to 52.0s.",
+      "gold_citations": ["ku_03"],
+      "is_conflict_query": true,
+      "correct_version": "v2",
+      "should_abstain": false
+    },
+    {
+      "id": "q08",
+      "query": "What is Newton's Second Law of Motion formula?",
+      "query_type": "formula",
+      "relevant_unit_ids": ["ku_07"],
+      "expected_answer": "Newton's Second Law states F = m * a.",
+      "gold_citations": ["ku_07"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q09",
+      "query": "What is the time complexity and auxiliary space of binary search?",
+      "query_type": "factual",
+      "relevant_unit_ids": ["ku_05"],
+      "expected_answer": "Binary search runs in O(log n) time with O(1) auxiliary space.",
+      "gold_citations": ["ku_05"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q10",
+      "query": "What is the time complexity of Depth First Search?",
+      "query_type": "factual",
+      "relevant_unit_ids": ["ku_13"],
+      "expected_answer": "DFS has time complexity O(V + E).",
+      "gold_citations": ["ku_13"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q11",
+      "query": "Explain how Master Theorem solves divide and conquer recurrences.",
+      "query_type": "conceptual",
+      "relevant_unit_ids": ["ku_06"],
+      "expected_answer": "Master theorem applies to T(n) = a*T(n/b) + f(n) comparing f(n) to n^(log_b(a)).",
+      "gold_citations": ["ku_06"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q12",
+      "query": "How can QuickSort avoid its quadratic worst case on sorted arrays?",
+      "query_type": "conceptual",
+      "relevant_unit_ids": ["ku_14"],
+      "expected_answer": "Using randomized pivot or median-of-three pivot avoids O(n^2) worst case.",
+      "gold_citations": ["ku_14"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q13",
+      "query": "What does the gradient descent trajectory diagram illustrate?",
+      "query_type": "conceptual",
+      "relevant_unit_ids": ["ku_10"],
+      "expected_answer": "It shows divergent trajectories when learning rate is too large versus smooth convergence.",
+      "gold_citations": ["ku_10"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q14",
+      "query": "What is the parameter update equation in gradient descent?",
+      "query_type": "formula",
+      "relevant_unit_ids": ["ku_11"],
+      "expected_answer": "theta := theta - alpha * grad(J(theta)).",
+      "gold_citations": ["ku_11"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q15",
+      "query": "Did the speaker and the slide disagree on kinetic energy?",
+      "query_type": "factual",
+      "relevant_unit_ids": ["ku_08", "ku_09"],
+      "expected_answer": "Yes, the slide stated KE = 0.5 * m * v^2 while speech incorrectly omitted the 0.5 factor.",
+      "gold_citations": ["ku_08", "ku_09"],
+      "is_conflict_query": true,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q16",
+      "query": "What data structure does Depth First Search utilize?",
+      "query_type": "factual",
+      "relevant_unit_ids": ["ku_13"],
+      "expected_answer": "Depth First Search uses recursion or an explicit LIFO Stack.",
+      "gold_citations": ["ku_13"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    },
+    {
+      "id": "q17",
+      "query": "What is the time complexity of quantum Fourier transform in Shor's algorithm?",
+      "query_type": "factual",
+      "relevant_unit_ids": [],
+      "expected_answer": "The provided educational material does not contain information about quantum Fourier transform.",
+      "gold_citations": [],
+      "is_conflict_query": false,
+      "correct_version": null,
+      "should_abstain": true
+    },
+    {
+      "id": "q18",
+      "query": "How many protons are present in a caffeine molecule?",
+      "query_type": "factual",
+      "relevant_unit_ids": [],
+      "expected_answer": "The provided source material does not contain information about caffeine molecules.",
+      "gold_citations": [],
+      "is_conflict_query": false,
+      "correct_version": null,
+      "should_abstain": true
+    },
+    {
+      "id": "q19",
+      "query": "What is the recurrence relation stated during the merge sort correction?",
+      "query_type": "formula",
+      "relevant_unit_ids": ["ku_03"],
+      "expected_answer": "The recurrence relation is T(n) = 2T(n/2) + O(n).",
+      "gold_citations": ["ku_03"],
+      "is_conflict_query": true,
+      "correct_version": "v2",
+      "should_abstain": false
+    },
+    {
+      "id": "q20",
+      "query": "Which shortest path algorithm should be selected when edges have negative costs?",
+      "query_type": "factual",
+      "relevant_unit_ids": ["ku_15"],
+      "expected_answer": "The Bellman-Ford algorithm should be used when graphs have negative edge weights.",
+      "gold_citations": ["ku_15"],
+      "is_conflict_query": false,
+      "correct_version": "v1",
+      "should_abstain": false
+    }
+  ]
+}

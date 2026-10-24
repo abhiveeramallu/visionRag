@@ -164,8 +164,9 @@ async def run_ingestion_pipeline(
                 except Exception as e:
                     logger.warning('ASR failed (not fatal): %s', e)
 
-            # --- Step 4: OCR ---
+            # --- Step 4: OCR & Vision ---
             ocr_segments = []
+            vision_segments = []
             if frames or source_type in ('pdf', 'ppt', 'image'):
                 await _update_job(db, job_id, current_step='Running OCR', progress=0.50)
                 try:
@@ -177,6 +178,17 @@ async def run_ingestion_pipeline(
                         pass
                 except Exception as e:
                     logger.warning('OCR failed (not fatal): %s', e)
+
+                # Vision model extraction for keyframes (if configured)
+                if frames and getattr(settings, 'vision_model', None):
+                    try:
+                        await _update_job(db, job_id, current_step='Extracting visual descriptions', progress=0.58)
+                        from app.extraction.vision import VisionExtractor
+                        ve = VisionExtractor(settings)
+                        sampled_frames = frames[::max(1, len(frames) // 10)] if len(frames) > 10 else frames
+                        vision_segments = await ve.describe_frames(sampled_frames, source_id)
+                    except Exception as e:
+                        logger.warning('Vision extraction failed (not fatal): %s', e)
 
             # Handle PDF/PPT/Image text extraction
             formula_segments = []
@@ -371,7 +383,7 @@ async def run_ingestion_pipeline(
                     source_id=source_id,
                     asr_segments=asr_segments,
                     ocr_segments=ocr_segments,
-                    vision_segments=[],
+                    vision_segments=vision_segments,
                     formula_segments=av_formula_segments,
                     code_segments=av_code_segments,
                     total_duration=total_duration,
@@ -394,7 +406,19 @@ async def run_ingestion_pipeline(
             from app.knowledge.evolution import detect_correction_phrase, content_keywords, keyword_overlap
             detector = ConflictDetector(settings)
             scorer = ConfidenceScorer()
+            scorer.build_recurrence_index(windows)
             all_conflicts = detector.detect_all(windows)
+            if settings.is_llm_configured() and all_conflicts:
+                try:
+                    context_by_window = {
+                        w.get('window_id', ''): ' '.join(
+                            s.get('text', '') for s in w.get('asr_segments', []) + w.get('ocr_segments', [])
+                        )
+                        for w in windows
+                    }
+                    all_conflicts = await detector.verify_all_with_llm(all_conflicts, context_by_window)
+                except Exception as e:
+                    logger.warning('LLM conflict verification during ingestion skipped: %s', e)
 
             ku_dicts = []
             evidence_rows = []
@@ -403,6 +427,7 @@ async def run_ingestion_pipeline(
                 all_segs = (
                     window.get('asr_segments', [])
                     + window.get('ocr_segments', [])
+                    + window.get('vision_segments', [])
                     + window.get('formula_segments', [])
                     + window.get('code_segments', [])
                 )
@@ -423,6 +448,7 @@ async def run_ingestion_pipeline(
                 primary_modality = (
                     window.get('code_segments')
                     or window.get('formula_segments')
+                    or window.get('vision_segments')
                     or window.get('ocr_segments')
                     or window.get('asr_segments')
                     or [{}]
@@ -520,6 +546,8 @@ async def run_ingestion_pipeline(
                     page=c.get('page'),
                     severity=c.get('severity', 'low'),
                     confidence=c.get('confidence', 0.5),
+                    resolved=bool(c.get('resolved', False)),
+                    resolution=c.get('resolution'),
                 ))
             await db.commit()
 

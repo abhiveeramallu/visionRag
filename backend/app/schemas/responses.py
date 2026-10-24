@@ -74,6 +74,10 @@ class ConflictInfo(BaseModel):
     page: Optional[int] = None
     severity: str  # low, medium, high
     confidence: float
+    status: Optional[str] = None
+    is_genuine_conflict: Optional[bool] = None
+    verification_status: Optional[str] = None
+    resolution: Optional[str] = None
 
 
 class QueryResponse(BaseModel):
@@ -85,6 +89,7 @@ class QueryResponse(BaseModel):
     confidence: float
     latency_ms: float
     retrieval_strategy_used: str
+    abstained: Optional[bool] = False
 
 
 class SummarySection(BaseModel):

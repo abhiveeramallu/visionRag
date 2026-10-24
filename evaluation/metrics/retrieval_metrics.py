@@ -141,8 +141,9 @@ def precision_at_k(
         raise ValueError(f"k must be a positive integer, got {k}")
 
     relevant_set = _to_set(relevant_ids)
-    top_k = retrieved_ids[:k]
-    hits  = sum(1 for doc_id in top_k if doc_id in relevant_set)
+    # Deduplicate retrieved items up to rank k so duplicates cannot inflate precision
+    top_k_set = set(retrieved_ids[:k])
+    hits = len(top_k_set & relevant_set)
     return hits / k
 
 
@@ -223,17 +224,22 @@ def ndcg_at_k(
     if not relevant_set:
         return 0.0
 
-    # Actual DCG
+    # Actual DCG (each relevant document contributes gain at most once)
     dcg = 0.0
+    seen_relevant: Set[str] = set()
     for i, doc_id in enumerate(retrieved_ids[:k], start=1):
-        if doc_id in relevant_set:
+        if doc_id in relevant_set and doc_id not in seen_relevant:
+            seen_relevant.add(doc_id)
             dcg += 1.0 / math.log2(i + 1)
 
     # Ideal DCG (best possible ranking)
     n_ideal = min(len(relevant_set), k)
     idcg = sum(1.0 / math.log2(i + 1) for i in range(1, n_ideal + 1))
 
-    return dcg / idcg if idcg > 0 else 0.0
+    if idcg <= 0.0:
+        return 0.0
+    score = dcg / idcg
+    return min(1.0, max(0.0, score))
 
 
 def average_precision(

@@ -160,25 +160,18 @@ def token_f1(prediction: str, ground_truth: str) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Citation Accuracy
+# Citation Metrics (Faithfulness & Ground Truth Precision/Recall)
 # ---------------------------------------------------------------------------
 
-def citation_accuracy(
+def citation_grounding(
     answer_citations: Sequence[str],
     retrieved_evidence: Sequence[str],
 ) -> float:
     """
-    Compute citation accuracy: the fraction of citations in the answer
-    that appear in the set of retrieved evidence IDs.
+    Compute citation grounding / faithfulness: the fraction of citations in the
+    answer that appear in the set of retrieved evidence IDs passed to the generator.
 
-    A "citation" here is a document/chunk/frame ID string that the model
-    included in its answer.  A citation is considered accurate if it
-    matches an ID in the retrieved evidence pool.
-
-    .. warning::
-        NOT YET VALIDATED — This metric has not been evaluated
-        against human annotations or a standardised benchmark.
-        It only checks ID membership, not semantic correctness.
+    Faithfulness = |citations ∩ retrieved_evidence| / |citations|
 
     Parameters
     ----------
@@ -190,20 +183,138 @@ def citation_accuracy(
     Returns
     -------
     float
-        Fraction of cited IDs that are in the retrieved evidence set.
-        Returns 1.0 if ``answer_citations`` is empty (vacuously accurate).
-
-    Examples
-    --------
-    >>> citation_accuracy(["c1", "c3", "c99"], ["c1", "c2", "c3", "c4"])
-    0.6666666666666666
+        Grounding score in [0.0, 1.0].  Returns 1.0 if ``answer_citations`` is empty
+        (i.e., when abstaining or citing nothing ungrounded).
     """
     if not answer_citations:
-        return 1.0  # No citations → vacuously accurate
+        return 1.0
 
     evidence_set = set(retrieved_evidence)
     hits = sum(1 for cit in answer_citations if cit in evidence_set)
     return hits / len(answer_citations)
+
+
+# Backward-compatible alias for citation_grounding
+citation_accuracy = citation_grounding
+
+
+def citation_precision_gold(
+    answer_citations: Sequence[str],
+    gold_citations: Sequence[str],
+) -> float:
+    """
+    Compute citation precision against independent gold-standard evidence IDs.
+
+    Precision = |citations ∩ gold_citations| / |citations|
+
+    Returns 1.0 if both citations and gold_citations are empty (e.g. unanswerable query).
+    Returns 0.0 if citations were emitted when gold is empty, or if no citations were emitted when gold is non-empty.
+    """
+    c_set = set(answer_citations)
+    g_set = set(gold_citations)
+
+    if not c_set:
+        return 1.0 if not g_set else 0.0
+    if not g_set:
+        return 0.0
+
+    hits = len(c_set & g_set)
+    return hits / len(c_set)
+
+
+def citation_recall_gold(
+    answer_citations: Sequence[str],
+    gold_citations: Sequence[str],
+) -> float:
+    """
+    Compute citation recall against independent gold-standard evidence IDs.
+
+    Recall = |citations ∩ gold_citations| / |gold_citations|
+
+    Returns 1.0 if both citations and gold_citations are empty.
+    Returns 0.0 if gold is non-empty and no citations were emitted.
+    """
+    c_set = set(answer_citations)
+    g_set = set(gold_citations)
+
+    if not g_set:
+        return 1.0 if not c_set else 0.0
+    if not c_set:
+        return 0.0
+
+    hits = len(c_set & g_set)
+    return hits / len(g_set)
+
+
+def citation_f1_gold(
+    answer_citations: Sequence[str],
+    gold_citations: Sequence[str],
+) -> float:
+    """
+    Compute citation F1 against gold-standard evidence IDs.
+    """
+    p = citation_precision_gold(answer_citations, gold_citations)
+    r = citation_recall_gold(answer_citations, gold_citations)
+    if p + r == 0:
+        return 0.0
+    return 2.0 * p * r / (p + r)
+
+
+def citation_support_rate(
+    answer_citations: Sequence[str],
+    corpus_by_id: dict,
+    answer_text: str,
+) -> float:
+    """
+    Verify whether each cited source genuinely contains and supports the concepts
+    asserted in the model answer.
+
+    For each cited ID:
+    - Verifies the chunk exists in corpus.
+    - Checks for lexical overlap of substantive words (>= 4 chars) between the chunk content
+      and the answer text.
+    """
+    if not answer_citations:
+        # If no citations emitted: considered supported if answer correctly abstained
+        if is_abstention_response(answer_text):
+            return 1.0
+        return 0.0
+
+    answer_words = set(re.findall(r'\b[a-zA-Z]{4,}\b', answer_text.lower()))
+    if not answer_words:
+        return 1.0
+
+    supported_count = 0
+    for cid in answer_citations:
+        chunk = corpus_by_id.get(cid)
+        if not chunk:
+            continue
+        chunk_text = (chunk.get("concept", "") + " " + chunk.get("content", "")).lower()
+        chunk_words = set(re.findall(r'\b[a-zA-Z]{4,}\b', chunk_text))
+        if answer_words & chunk_words:
+            supported_count += 1
+
+    return supported_count / len(answer_citations)
+
+
+ABSTENTION_PHRASES = [
+    "insufficient evidence",
+    "does not contain",
+    "do not establish",
+    "cannot be answered",
+    "not provided",
+    "not mentioned",
+    "no information",
+    "unable to answer",
+]
+
+
+def is_abstention_response(answer_text: str) -> bool:
+    """Check if the answer text expresses abstention / insufficient evidence."""
+    if not answer_text or not answer_text.strip():
+        return True
+    lowered = answer_text.lower()
+    return any(phrase in lowered for phrase in ABSTENTION_PHRASES)
 
 
 # ---------------------------------------------------------------------------

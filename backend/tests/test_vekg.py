@@ -124,3 +124,91 @@ def test_update_missing_unit_raises(vekg):
     """Updating a non-existent unit should raise ValueError."""
     with pytest.raises(ValueError):
         vekg.update_unit('nonexistent', make_unit('u_new'), 'reason')
+
+
+def test_reconstruct_from_units_lineage_and_conflicts():
+    """
+    Simulate serializing and reconstructing a knowledge evolution graph.
+    Rebuilding must restore CORRECTS edges and CONFLICTS_WITH edges matching pre-persistence state.
+    """
+    from app.knowledge.knowledge_units import ProcessedKnowledgeUnit
+    from app.knowledge.vekg import VEKG, EDGE_CORRECTS, EDGE_CONFLICTS_WITH
+
+    # Pre-persistence graph creation
+    original_vekg = VEKG()
+    u1 = make_unit('u1', concept='Merge Sort', content='Initial slip: O(n^2)', status='superseded')
+    u1.version = 1
+    original_vekg.add_unit(u1)
+
+    u2 = make_unit('u2', concept='Merge Sort', content='Correction: O(n log n)', status='verified')
+    u2.version = 2
+    u2.previous_version_id = 'u1'
+    u2.correction_reason = 'Instructor corrected speech slip at 14:32'
+    original_vekg.add_unit(u2)
+    original_vekg.graph.add_edge('u2', 'u1', relation=EDGE_CORRECTS, reason=u2.correction_reason)
+
+    u3 = make_unit('u3', concept='Merge Sort', content='Slide says O(n log n)', status='disputed', modality='ocr')
+    original_vekg.add_unit(u3)
+    original_vekg.add_conflict('u1', 'u3', {'conflict_type': 'complexity_disagreement'})
+
+    # Pre-persistence lineage
+    orig_lineage = [u.id for u in original_vekg.get_lineage('u2')]
+    assert orig_lineage == ['u2', 'u1']
+
+    # Now simulate persisted records (like rows in DB)
+    persisted_units = [u1, u2, u3]
+    persisted_conflicts = [
+        {
+            'unit_ids': ['u1', 'u3'],
+            'conflict_type': 'complexity_disagreement',
+            'severity': 'high',
+            'confidence': 0.85,
+        }
+    ]
+
+    # Reconstruct fresh graph from persisted records
+    reconstructed_vekg = VEKG()
+    reconstructed_vekg.reconstruct_from_units(persisted_units, conflicts=persisted_conflicts)
+
+    # 1. Verify node count and status
+    assert len(reconstructed_vekg) == 3
+    assert reconstructed_vekg.get_unit('u1').status == 'disputed'  # marked disputed by conflict
+    assert reconstructed_vekg.get_unit('u2').status == 'verified'
+
+    # 2. Verify lineage traversal
+    recon_lineage = [u.id for u in reconstructed_vekg.get_lineage('u2')]
+    assert recon_lineage == orig_lineage
+
+    # 3. Verify graph edges
+    assert reconstructed_vekg.graph.has_edge('u2', 'u1')
+    assert reconstructed_vekg.graph.edges['u2', 'u1']['relation'] == EDGE_CORRECTS
+
+    # 4. Verify conflict pairs
+    conflict_pairs = reconstructed_vekg.get_conflicting_units()
+    assert len(conflict_pairs) == 1
+    pair_ids = {conflict_pairs[0][0].id, conflict_pairs[0][1].id}
+    assert pair_ids == {'u1', 'u3'}
+
+    # 5. Verify to_dict output
+    export_dict = reconstructed_vekg.to_dict()
+    assert len(export_dict['nodes']) == 3
+    # 1 corrects edge + 2 bidirectional conflict edges = 3 total edges
+    assert len(export_dict['edges']) == 3
+
+
+def test_reconstruct_dangling_reference_handled_safely():
+    """If previous_version_id points to a non-existent unit, reconstruction must not create dangling edge."""
+    from app.knowledge.vekg import VEKG
+
+    vekg = VEKG()
+    u = make_unit('u_orphan', concept='Test')
+    u.previous_version_id = 'nonexistent_ancestor'
+
+    vekg.reconstruct_from_units([u])
+    assert len(vekg) == 1
+    assert vekg.graph.number_of_edges() == 0
+    # Lineage stops safely at orphan
+    lineage = vekg.get_lineage('u_orphan')
+    assert len(lineage) == 1
+    assert lineage[0].id == 'u_orphan'
+

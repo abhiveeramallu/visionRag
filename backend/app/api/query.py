@@ -35,14 +35,17 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
     if source.status not in ('completed', 'failed'):
         raise HTTPException(status_code=409, detail=f'Source processing is not complete (status: {source.status})')
 
-    # Load knowledge units from DB
+    # Load knowledge units from DB (up to 2000 active units per source)
     ku_result = await db.execute(
         select(KnowledgeUnit)
         .where(KnowledgeUnit.source_id == request.source_id)
         .where(KnowledgeUnit.status != 'superseded')
-        .limit(500)
+        .order_by(KnowledgeUnit.created_at.asc())
+        .limit(2000)
     )
     units = ku_result.scalars().all()
+    if len(units) >= 2000:
+        logger.warning('Source %s exceeded 2000 active knowledge units; retrieved top 2000', request.source_id)
     units_as_dicts = [_ku_to_dict(u) for u in units]
     units_by_id = {u['id']: u for u in units_as_dicts}
 
@@ -62,6 +65,31 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
     from app.verification.provenance import ProvenanceTracker
     from app.generation.llm import LLMClient
     from app.generation.answer import AnswerGenerator
+    from app.knowledge.vekg import VEKG
+    from app.knowledge.knowledge_units import ProcessedKnowledgeUnit
+
+    # Reconstruct in-memory VEKG for this source including lineage edges and conflicts
+    pku_units = [
+        ProcessedKnowledgeUnit(
+            id=u.id,
+            concept=u.concept,
+            content=u.content,
+            modality=u.modality,
+            source_id=u.source_id,
+            timestamp_start=u.timestamp_start,
+            timestamp_end=u.timestamp_end,
+            page=u.page,
+            slide=u.slide,
+            confidence=u.confidence,
+            status=u.status,
+            version=u.version,
+            previous_version_id=u.previous_version_id,
+            correction_reason=u.correction_reason,
+        )
+        for u in units
+    ]
+    vekg = VEKG()
+    vekg.reconstruct_from_units(pku_units, conflicts=conflicts)
 
     qdrant = QdrantManager(settings)
     vector_idx = VectorIndex(settings, qdrant)
@@ -75,7 +103,7 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
         gamma=settings.retrieval_gamma,
     )
     router_obj = DynamicRouter()
-    retriever = Retriever(hybrid, vekg=None, settings=settings)
+    retriever = Retriever(hybrid, vekg=vekg, settings=settings)
     reranker = Reranker()
     provenance = ProvenanceTracker()
     pipeline = RetrievalPipeline(router_obj, retriever, reranker, provenance, settings)
@@ -99,6 +127,7 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
             evidence=pipeline_result['evidence'],
             conflicts=pipeline_result['conflicts'],
             source_title=source.title,
+            abstain=pipeline_result.get('abstain', False),
         )
         answer_text = answer_result['answer']
         confidence = answer_result['confidence']
@@ -125,6 +154,10 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
                 'page': c.get('page'),
                 'severity': c.get('severity', 'low'),
                 'confidence': c.get('confidence', 0.5),
+                'status': c.get('status', 'candidate' if c.get('is_candidate') else 'unresolved'),
+                'is_genuine_conflict': c.get('is_genuine_conflict'),
+                'verification_status': c.get('verification_status', 'unverified'),
+                'resolution': c.get('resolution'),
             })
 
     return {
@@ -136,6 +169,7 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
         'confidence': confidence,
         'latency_ms': pipeline_result['latency_ms'],
         'retrieval_strategy_used': pipeline_result['strategy_used'],
+        'abstained': pipeline_result.get('abstain', False),
     }
 
 
