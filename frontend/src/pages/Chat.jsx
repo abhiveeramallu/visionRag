@@ -285,7 +285,7 @@ export default function Chat() {
         content: res.answer,
         evidence: res.evidence || [],
         conflicts: res.conflicts || [],
-        confidence: res.confidence ?? 0.8,
+        confidence: res.confidence,
         strategy: res.retrieval_strategy_used,
         abstained: res.abstained || false,
         latency_ms: res.latency_ms,
@@ -305,7 +305,6 @@ export default function Chat() {
         content: `Error retrieving answer: ${err.message || 'Server error'}`,
         evidence: [],
         conflicts: [],
-        confidence: 0,
         abstained: true,
         created_at: new Date().toISOString(),
       }

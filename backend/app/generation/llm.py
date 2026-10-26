@@ -33,13 +33,13 @@ def friendly_llm_error(e: Exception) -> str:
     """
     text = str(e)
     lowered = text.lower()
-    if isinstance(e, ConfigurationError) or 'api key not set' in lowered:
-        return 'AI answer generation is not configured for this deployment yet.'
+    if isinstance(e, ConfigurationError) or 'api key not set' in lowered or 'not configured' in lowered:
+        return 'Answer generation is not configured. Retrieved evidence is shown below.'
     if '429' in text or 'quota' in lowered or 'rate limit' in lowered:
-        return 'AI answer generation has hit its usage quota for now — try again later.'
+        return 'Answer generation has hit its usage quota for now — try again later.'
     if 'timeout' in lowered or 'timed out' in lowered:
-        return 'AI answer generation timed out — try again in a moment.'
-    return 'AI answer generation is temporarily unavailable.'
+        return 'Answer generation timed out — try again in a moment.'
+    return 'Answer generation is temporarily unavailable.'
 
 
 class LLMClient:

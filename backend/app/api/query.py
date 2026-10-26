@@ -174,11 +174,18 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
     except Exception as e:
         logger.warning('LLM answer generation failed: %s', e)
         from app.generation.llm import friendly_llm_error
-        answer_text = (
-            f'{friendly_llm_error(e)}\n\n'
-            'Here is the verified evidence this answer would have been based on:\n' +
-            '\n'.join(f'- {ev["text"][:200]}' for ev in pipeline_result['evidence'][:3])
-        )
+        status_msg = friendly_llm_error(e)
+        evidence_snippets = [f'- {ev["text"][:200]}' for ev in pipeline_result.get('evidence', [])[:3]]
+        if 'Retrieved evidence is shown below' in status_msg:
+            if evidence_snippets:
+                answer_text = f'{status_msg}\n\n' + '\n'.join(evidence_snippets)
+            else:
+                answer_text = status_msg
+        else:
+            if evidence_snippets:
+                answer_text = f'{status_msg} Retrieved evidence is shown below:\n\n' + '\n'.join(evidence_snippets)
+            else:
+                answer_text = status_msg
         confidence = 0.0
 
     # Build conflict response objects

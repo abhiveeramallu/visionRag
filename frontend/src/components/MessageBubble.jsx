@@ -74,11 +74,6 @@ export default function MessageBubble({ message, onTimestampClick }) {
                 <ShieldCheck className="w-3.5 h-3.5 text-primary-600 inline mr-1" />
                 VisionRAG-X Verified Response
               </span>
-              {message.confidence !== undefined && (
-                <span className="text-xs font-mono px-2 py-0.5 rounded bg-gray-100 text-gray-700">
-                  Confidence: {(message.confidence * 100).toFixed(0)}%
-                </span>
-              )}
             </div>
 
             <div className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">

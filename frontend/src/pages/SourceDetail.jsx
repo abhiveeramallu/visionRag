@@ -166,7 +166,6 @@ export default function SourceDetail() {
       content: 'Ask about this lecture — I will ground every answer in verified evidence with a timestamp or page citation.',
       evidence: [],
       conflicts: [],
-      confidence: 1,
     },
   ])
   const [input, setInput] = useState('')
@@ -203,7 +202,7 @@ export default function SourceDetail() {
         content: res.answer,
         evidence: res.evidence || [],
         conflicts: res.conflicts || [],
-        confidence: res.confidence ?? 0.8,
+        confidence: res.confidence,
         strategy: res.retrieval_strategy_used,
       }])
       setLastStrategy(res.retrieval_strategy_used)
