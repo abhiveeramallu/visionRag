@@ -84,63 +84,39 @@ class QueryResponse(BaseModel):
     answer: str
     query: str
     source_id: str
+    conversation_id: Optional[str] = None
     evidence: List[EvidenceItem] = Field(default_factory=list)
     conflicts: List[ConflictInfo] = Field(default_factory=list)
     confidence: float
     latency_ms: float
     retrieval_strategy_used: str
     abstained: Optional[bool] = False
+    trace: Optional[Dict[str, Any]] = None
 
 
-class SummarySection(BaseModel):
-    title: str
+class ChatMessageResponse(BaseModel):
+    id: str
+    conversation_id: str
+    source_id: str
+    role: str
     content: str
-    timestamp_start: Optional[float] = None
-    timestamp_end: Optional[float] = None
-    page: Optional[int] = None
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    conflicts: List[Dict[str, Any]] = Field(default_factory=list)
+    trace: Optional[Dict[str, Any]] = None
+    confidence: Optional[float] = None
+    strategy: Optional[str] = None
+    abstained: bool = False
+    latency_ms: Optional[float] = None
+    created_at: datetime
 
 
-class SummaryResponse(BaseModel):
+class ConversationResponse(BaseModel):
+    id: str
     source_id: str
-    summary_type: str
-    content: str
-    sections: List[SummarySection] = Field(default_factory=list)
-    generated_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-class QuizQuestion(BaseModel):
-    question_id: str
-    question: str
-    question_type: str
-    options: Optional[List[str]] = None  # for MCQ
-    answer: str
-    explanation: str
-    difficulty: str
-    source_evidence: Optional[EvidenceItem] = None
-
-
-class QuizResponse(BaseModel):
-    source_id: str
-    questions: List[QuizQuestion]
-    topic: Optional[str] = None
-    difficulty: str
-    generated_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-class FlashcardItem(BaseModel):
-    card_id: str
-    front: str  # question
-    back: str   # answer
-    concept: str
-    source_evidence: Optional[EvidenceItem] = None
-    confidence: float = 0.5
-
-
-class FlashcardResponse(BaseModel):
-    source_id: str
-    cards: List[FlashcardItem]
-    topic: Optional[str] = None
-    generated_at: datetime = Field(default_factory=datetime.utcnow)
+    title: Optional[str] = None
+    messages: List[ChatMessageResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
 
 
 class KnowledgeUnitResponse(BaseModel):
@@ -159,20 +135,6 @@ class KnowledgeUnitResponse(BaseModel):
     correction_reason: Optional[str] = None
     evidence_count: int = 0
     conflict_count: int = 0
-
-
-class NotesSection(BaseModel):
-    title: str
-    content: str
-    page: Optional[int] = None
-
-
-class NotesResponse(BaseModel):
-    source_id: str
-    notes_type: str
-    content: str
-    sections: List[NotesSection] = Field(default_factory=list)
-    generated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ErrorResponse(BaseModel):

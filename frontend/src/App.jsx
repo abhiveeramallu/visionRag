@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
 import AddSourceModal from './components/AddSourceModal'
@@ -9,13 +9,10 @@ import SourceDetail from './pages/SourceDetail'
 import Upload from './pages/Upload'
 import Processing from './pages/Processing'
 import Chat from './pages/Chat'
-import KnowledgeView from './pages/KnowledgeView'
+import KnowledgeUnits from './pages/KnowledgeUnits'
 import KnowledgeGraph from './pages/KnowledgeGraph'
 import KnowledgeEvolution from './pages/KnowledgeEvolution'
-import Summary from './pages/Summary'
-import Quiz from './pages/Quiz'
-import Flashcards from './pages/Flashcards'
-import Notes from './pages/Notes'
+import Evaluation from './pages/Evaluation'
 import Search from './pages/Search'
 
 function App() {
@@ -31,27 +28,42 @@ function App() {
 
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
           <Routes>
+            {/* 1. Home / Sources */}
             <Route path="/" element={<Home />} />
             <Route path="/sources" element={<Sources />} />
             <Route path="/source/:sourceId" element={<SourceDetail />} />
             <Route path="/upload" element={<Upload />} />
             <Route path="/processing/:sourceId" element={<Processing />} />
-            <Route path="/knowledge" element={<KnowledgeView />} />
-            <Route path="/knowledge/:sourceId" element={<KnowledgeView />} />
+
+            {/* 2. Knowledge Units */}
+            <Route path="/knowledge-units" element={<KnowledgeUnits />} />
+            <Route path="/knowledge-units/:kuId" element={<KnowledgeUnits />} />
+            <Route path="/knowledge" element={<KnowledgeUnits />} />
+            <Route path="/knowledge/:sourceId" element={<KnowledgeUnits />} />
+
+            {/* 3. Knowledge Graph / VEKG */}
             <Route path="/knowledge-graph" element={<KnowledgeGraph />} />
             <Route path="/knowledge-evolution" element={<KnowledgeEvolution />} />
             <Route path="/knowledge-evolution/:conceptId" element={<KnowledgeEvolution />} />
+
+            {/* 4. AI Chat */}
             <Route path="/chat" element={<Chat />} />
             <Route path="/chat/:sourceId" element={<Chat />} />
-            <Route path="/summary" element={<Summary />} />
-            <Route path="/summary/:sourceId" element={<Summary />} />
-            <Route path="/quiz" element={<Quiz />} />
-            <Route path="/quiz/:sourceId" element={<Quiz />} />
-            <Route path="/flashcards" element={<Flashcards />} />
-            <Route path="/flashcards/:sourceId" element={<Flashcards />} />
-            <Route path="/notes" element={<Notes />} />
-            <Route path="/notes/:sourceId" element={<Notes />} />
+
+            {/* 5. Evaluation */}
+            <Route path="/evaluation" element={<Evaluation />} />
+
+            {/* Utility */}
             <Route path="/search" element={<Search />} />
+
+            {/* Redirects for removed obsolete features */}
+            <Route path="/summary/*" element={<Navigate to="/" replace />} />
+            <Route path="/quiz/*" element={<Navigate to="/" replace />} />
+            <Route path="/flashcards/*" element={<Navigate to="/" replace />} />
+            <Route path="/notes/*" element={<Navigate to="/" replace />} />
+
+            {/* Fallback */}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>

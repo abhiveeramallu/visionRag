@@ -70,6 +70,7 @@ class Source(Base):
     processing_jobs = relationship("ProcessingJob", back_populates="source", cascade="all, delete-orphan")
     knowledge_units = relationship("KnowledgeUnit", back_populates="source", cascade="all, delete-orphan")
     conflicts = relationship("Conflict", back_populates="source", cascade="all, delete-orphan")
+    conversations = relationship("ChatConversation", back_populates="source", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Source id={self.id!r} title={self.title!r} type={self.source_type!r} status={self.status!r}>"
@@ -219,3 +220,77 @@ class Conflict(Base):
             f"<Conflict id={self.id!r} type={self.conflict_type!r} "
             f"severity={self.severity!r} resolved={self.resolved}>"
         )
+
+
+# ---------------------------------------------------------------------------
+# ChatConversation
+# ---------------------------------------------------------------------------
+
+class ChatConversation(Base):
+    """
+    A persistent chat session strictly scoped to an individual Source.
+    """
+
+    __tablename__ = "chat_conversations"
+
+    id: str = Column(String(36), primary_key=True, default=_uuid)
+    source_id: str = Column(String(36), ForeignKey("sources.id", ondelete="CASCADE"), nullable=False, index=True)
+    title: Optional[str] = Column(String(256), nullable=True)
+    created_at: datetime = Column(DateTime, nullable=False, default=_now, server_default=func.now())
+    updated_at: datetime = Column(DateTime, nullable=False, default=_now, onupdate=_now, server_default=func.now())
+
+    # Relationships
+    source = relationship("Source", back_populates="conversations")
+    messages = relationship(
+        "ChatMessage",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ChatMessage.created_at.asc()",
+    )
+
+    def __repr__(self) -> str:
+        return f"<ChatConversation id={self.id!r} source_id={self.source_id!r} title={self.title!r}>"
+
+
+# ---------------------------------------------------------------------------
+# ChatMessage
+# ---------------------------------------------------------------------------
+
+class ChatMessage(Base):
+    """
+    An individual turn (user or assistant) in a source-scoped conversation.
+    """
+
+    __tablename__ = "chat_messages"
+
+    id: str = Column(String(36), primary_key=True, default=_uuid)
+    conversation_id: str = Column(
+        String(36),
+        ForeignKey("chat_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_id: str = Column(
+        String(36),
+        ForeignKey("sources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role: str = Column(String(16), nullable=False)  # 'user' | 'assistant'
+    content: str = Column(Text, nullable=False)
+    evidence: list = Column(JSON, nullable=False, default=list)
+    conflicts: list = Column(JSON, nullable=False, default=list)
+    trace: dict = Column(JSON, nullable=False, default=dict)
+    confidence: Optional[float] = Column(Float, nullable=True)
+    strategy: Optional[str] = Column(String(64), nullable=True)
+    abstained: bool = Column(Boolean, nullable=False, default=False)
+    latency_ms: Optional[float] = Column(Float, nullable=True)
+    created_at: datetime = Column(DateTime, nullable=False, default=_now, server_default=func.now())
+
+    # Relationships
+    conversation = relationship("ChatConversation", back_populates="messages")
+    source = relationship("Source")
+
+    def __repr__(self) -> str:
+        return f"<ChatMessage id={self.id!r} role={self.role!r} source_id={self.source_id!r}>"
+

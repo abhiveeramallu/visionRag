@@ -22,6 +22,9 @@ from app.config import Settings
 
 logger = logging.getLogger(__name__)
 
+# Process-wide singleton for embedded local Qdrant client to avoid portalocker file-lock contention
+_SHARED_LOCAL_CLIENT: Optional[AsyncQdrantClient] = None
+
 # Map embedding model names to their output dimensions.
 _EMBEDDING_DIMS: Dict[str, int] = {
     "BAAI/bge-base-en-v1.5": 768,
@@ -47,6 +50,7 @@ class QdrantManager:
         self._settings = settings
         self._collection = settings.qdrant_collection
         self._vector_size = _infer_vector_size(settings.embedding_model)
+        self._using_local = False
 
         kwargs: Dict[str, Any] = {"url": settings.qdrant_url}
         if settings.qdrant_api_key:
@@ -60,6 +64,58 @@ class QdrantManager:
             self._vector_size,
         )
 
+    async def _ensure_client(self) -> None:
+        """
+        Verify the Qdrant client connection.
+        If the remote Qdrant server is unreachable (e.g. running locally without Docker),
+        automatically fall back to embedded on-disk vector storage.
+        """
+        global _SHARED_LOCAL_CLIENT
+
+        if self._using_local:
+            return
+
+        if _SHARED_LOCAL_CLIENT is not None:
+            self.client = _SHARED_LOCAL_CLIENT
+            self._using_local = True
+            return
+
+        try:
+            await self.client.get_collections()
+        except Exception as exc:
+            from pathlib import Path
+            local_dir = Path(self._settings.processed_dir) / "qdrant_storage"
+            local_dir.mkdir(parents=True, exist_ok=True)
+            logger.warning(
+                "Remote Qdrant at %s unreachable (%s). Falling back to embedded local storage at %s.",
+                self._settings.qdrant_url,
+                exc,
+                local_dir,
+            )
+            if _SHARED_LOCAL_CLIENT is None:
+                try:
+                    _SHARED_LOCAL_CLIENT = AsyncQdrantClient(path=str(local_dir))
+                except Exception as lock_err:
+                    logger.warning(
+                        "Qdrant storage folder %s locked or unavailable (%s); using in-memory vector store",
+                        local_dir,
+                        lock_err,
+                    )
+                    _SHARED_LOCAL_CLIENT = AsyncQdrantClient(location=":memory:")
+            self.client = _SHARED_LOCAL_CLIENT
+            self._using_local = True
+
+            # Ensure collection exists on local embedded instance
+            cols = [c.name for c in (await self.client.get_collections()).collections]
+            if self._collection not in cols:
+                await self.client.create_collection(
+                    collection_name=self._collection,
+                    vectors_config=VectorParams(
+                        size=self._vector_size,
+                        distance=Distance.COSINE,
+                    ),
+                )
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -69,6 +125,7 @@ class QdrantManager:
         Ensure the target collection exists.
         Creates it with COSINE distance if absent; skips silently if present.
         """
+        await self._ensure_client()
         existing = [c.name for c in (await self.client.get_collections()).collections]
         if self._collection in existing:
             logger.info("Collection '%s' already exists – skipping creation.", self._collection)
@@ -94,16 +151,10 @@ class QdrantManager:
     async def upsert_vectors(self, points: List[PointStruct]) -> None:
         """
         Upsert a batch of PointStruct objects into the collection.
-
-        Parameters
-        ----------
-        points:
-            List of ``qdrant_client.http.models.PointStruct`` objects.
-            Each point requires an ``id`` (str/int), ``vector`` (list[float]),
-            and optionally a ``payload`` dict.
         """
         if not points:
             return
+        await self._ensure_client()
         await self.client.upsert(
             collection_name=self._collection,
             points=points,
@@ -124,23 +175,8 @@ class QdrantManager:
     ) -> List[Dict[str, Any]]:
         """
         Approximate nearest-neighbour search.
-
-        Parameters
-        ----------
-        query_vector:
-            Dense embedding of the query (must match collection dims).
-        source_id_filter:
-            If set, restrict results to vectors whose payload ``source_id``
-            equals this value.
-        limit:
-            Maximum number of results to return.
-        score_threshold:
-            Drop results with cosine similarity below this value.
-
-        Returns
-        -------
-        List of dicts with keys: id, score, payload.
         """
+        await self._ensure_client()
         query_filter: Optional[Filter] = None
         if source_id_filter:
             query_filter = Filter(
@@ -177,9 +213,8 @@ class QdrantManager:
     async def delete_by_source(self, source_id: str) -> None:
         """
         Delete all vectors whose payload ``source_id`` matches.
-
-        Uses a filter-based delete (no need to know individual point IDs).
         """
+        await self._ensure_client()
         await self.client.delete(
             collection_name=self._collection,
             points_selector=FilterSelector(

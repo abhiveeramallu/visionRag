@@ -43,23 +43,53 @@ export const getKnowledgeUnitHistory = (kuId) => api.get(`/knowledge/unit/${kuId
 export const getKnowledgeUnitEvidence = (kuId) => api.get(`/knowledge/unit/${kuId}/evidence`)
 export const getSourceConflicts = (sourceId) => api.get(`/source/${sourceId}/conflicts`)
 export const getSourceEvolution = (sourceId) => api.get(`/source/${sourceId}/evolution`)
+export const getKnowledgeGraph = (sourceId = null) =>
+  api.get('/knowledge-graph', { params: sourceId ? { source_id: sourceId } : {} })
 
-export const querySource = (sourceId, query, topK = 5, includeEvidence = true, includeConflicts = true) =>
+export const querySource = (
+  sourceId,
+  query,
+  topK = 5,
+  includeEvidence = true,
+  includeConflicts = true,
+  conversationId = null,
+) =>
   api.post('/query', {
-    source_id: sourceId, query, top_k: topK,
-    include_evidence: includeEvidence, include_conflicts: includeConflicts,
+    source_id: sourceId,
+    query,
+    top_k: topK,
+    include_evidence: includeEvidence,
+    include_conflicts: includeConflicts,
+    conversation_id: conversationId,
   })
 
-export const getSummary = (sourceId, summaryType = 'overall', topic = null) =>
-  api.post('/summary', { source_id: sourceId, summary_type: summaryType, topic })
+export const getSourceConversation = (sourceId, conversationId = null) =>
+  api.get(`/chat/sources/${sourceId}/conversation`, {
+    params: conversationId ? { conversation_id: conversationId } : {},
+  })
 
-export const generateQuiz = (sourceId, quizType = 'mcq', difficulty = 'medium', numQuestions = 5, topic = null) =>
-  api.post('/quiz', { source_id: sourceId, quiz_type: quizType, difficulty, num_questions: numQuestions, topic })
+export const newSourceConversation = (sourceId) =>
+  api.post(`/chat/sources/${sourceId}/conversation/new`)
 
-export const generateFlashcards = (sourceId, numCards = 10, topic = null) =>
-  api.post('/flashcards', { source_id: sourceId, num_cards: numCards, topic })
+export const getSuggestedQuestions = (sourceId) =>
+  api.get(`/chat/sources/${sourceId}/suggested-questions`)
 
-export const generateNotes = (sourceId, notesType = 'concise', topic = null) =>
-  api.post('/notes', { source_id: sourceId, notes_type: notesType, topic })
+export const getSourceConversations = (sourceId) =>
+  api.get(`/chat/sources/${sourceId}/conversations`)
+
+export const deleteConversation = (conversationId) =>
+  api.delete(`/chat/conversations/${conversationId}`)
+
+export const getKnowledgeUnits = (params = {}) =>
+  api.get('/knowledge-units', { params })
+
+export const getKnowledgeUnitDetail = (kuId) =>
+  api.get(`/knowledge-units/${kuId}`)
+
+export const getEvaluationArtifacts = () =>
+  api.get('/evaluation/artifacts')
+
+export const runEvaluation = (type = 'synthetic') =>
+  api.post('/evaluation/run', { type })
 
 export default api

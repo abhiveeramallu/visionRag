@@ -129,12 +129,11 @@ async def general_exception_handler(request: Request, exc: Exception):
 # Routers
 # ---------------------------------------------------------------------------
 
-from app.api import health, upload, query, summary  # noqa: E402
+from app.api import health, upload, query  # noqa: E402
 
 app.include_router(health.router, tags=['Health'])
 app.include_router(upload.router, tags=['Ingestion'])
 app.include_router(query.router, tags=['Query & Knowledge'])
-app.include_router(summary.router, tags=['Generation'])
 
 
 # ---------------------------------------------------------------------------

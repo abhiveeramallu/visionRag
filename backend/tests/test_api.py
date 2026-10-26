@@ -106,3 +106,198 @@ def test_query_source_not_found(client):
         })
         assert response.status_code == 404
         app.dependency_overrides.clear()
+
+
+def test_knowledge_graph_empty(client):
+    """GET /api/knowledge-graph with no sources should return empty graph structure."""
+    with patch('app.api.query.get_db'):
+        from app.main import app
+        from app.database.postgres import get_db
+
+        async def override_db():
+            mock_session = AsyncMock()
+            mock_result = MagicMock()
+            mock_result.scalars.return_value.all.return_value = []
+            mock_session.execute = AsyncMock(return_value=mock_result)
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_db
+        response = client.get('/api/knowledge-graph')
+        assert response.status_code == 200
+        data = response.json()
+        assert 'nodes' in data
+        assert 'edges' in data
+        assert 'summary' in data
+        assert data['nodes'] == []
+        assert data['edges'] == []
+        app.dependency_overrides.clear()
+
+
+def test_knowledge_graph_with_units_and_lineage(client):
+    """GET /api/knowledge-graph should return real nodes and correction edges."""
+    with patch('app.api.query.get_db'):
+        from app.main import app
+        from app.database.postgres import get_db
+        from app.knowledge.models import Source, KnowledgeUnit
+
+        mock_src = Source(id='src-1', title='Algorithms PDF', status='completed')
+        mock_ku1 = KnowledgeUnit(
+            id='ku-1', concept='Merge Sort', content='O(n^2)', modality='ocr',
+            source_id='src-1', status='superseded', version=1, confidence=0.8, page=2
+        )
+        mock_ku2 = KnowledgeUnit(
+            id='ku-2', concept='Merge Sort', content='O(n log n)', modality='formula',
+            source_id='src-1', status='verified', version=2, confidence=0.9, page=6,
+            previous_version_id='ku-1', correction_reason='Errata correction'
+        )
+
+        async def override_db():
+            mock_session = AsyncMock()
+            # 1. Sources query
+            res_src = MagicMock()
+            res_src.scalars.return_value.all.return_value = [mock_src]
+            # 2. Units query
+            res_ku = MagicMock()
+            res_ku.scalars.return_value.all.return_value = [mock_ku1, mock_ku2]
+            # 3. Evidence count query
+            res_ev = MagicMock()
+            res_ev.all.return_value = [('ku-1', 1), ('ku-2', 1)]
+            # 4. Conflicts query
+            res_conf = MagicMock()
+            res_conf.scalars.return_value.all.return_value = []
+
+            mock_session.execute = AsyncMock(side_effect=[res_src, res_ku, res_ev, res_conf])
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_db
+        response = client.get('/api/knowledge-graph')
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data['nodes']) == 2
+        assert len(data['edges']) == 1
+        edge = data['edges'][0]
+        assert edge['relation'] == 'corrects'
+        assert edge['source'] == 'ku-2'
+        assert edge['target'] == 'ku-1'
+        assert edge['reason'] == 'Errata correction'
+        app.dependency_overrides.clear()
+
+
+def test_list_knowledge_units(client):
+    """GET /api/knowledge-units should return paginated list of units."""
+    with patch('app.api.query.get_db'):
+        from app.main import app
+        from app.database.postgres import get_db
+        from app.knowledge.models import Source, KnowledgeUnit
+
+        mock_src = Source(id='src-1', title='Algorithms PDF', status='completed')
+        mock_ku = KnowledgeUnit(
+            id='ku-1', concept='Merge Sort', content='O(n log n)', modality='formula',
+            source_id='src-1', status='verified', version=1, confidence=0.9, page=6
+        )
+
+        async def override_db():
+            mock_session = AsyncMock()
+            # 1. Count query
+            res_count = MagicMock()
+            res_count.scalar.return_value = 1
+            # 2. Units query
+            res_ku = MagicMock()
+            res_ku.scalars.return_value.all.return_value = [mock_ku]
+            # 3. Source query
+            res_src = MagicMock()
+            res_src.scalars.return_value.all.return_value = [mock_src]
+            # 4. Evidence counts query
+            res_ev = MagicMock()
+            res_ev.all.return_value = [('ku-1', 2)]
+
+            mock_session.execute = AsyncMock(side_effect=[res_count, res_ku, res_src, res_ev])
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_db
+        response = client.get('/api/knowledge-units?search=Merge')
+        assert response.status_code == 200
+        data = response.json()
+        assert data['total'] == 1
+        assert len(data['items']) == 1
+        assert data['items'][0]['id'] == 'ku-1'
+        assert data['items'][0]['concept'] == 'Merge Sort'
+        assert data['items'][0]['source_title'] == 'Algorithms PDF'
+        assert data['items'][0]['evidence_count'] == 2
+        app.dependency_overrides.clear()
+
+
+def test_get_knowledge_unit_detail(client):
+    """GET /api/knowledge-units/{ku_id} returns detailed unit, lineage, and evidence."""
+    with patch('app.api.query.get_db'):
+        from app.main import app
+        from app.database.postgres import get_db
+        from app.knowledge.models import Source, KnowledgeUnit, Evidence
+
+        mock_src = Source(id='src-1', title='Algorithms PDF', status='completed', source_type='pdf')
+        mock_ku = KnowledgeUnit(
+            id='ku-2', concept='Merge Sort', content='O(n log n)', modality='formula',
+            source_id='src-1', status='verified', version=2, confidence=0.95, page=6,
+            previous_version_id='ku-1', correction_reason='Errata correction'
+        )
+        mock_prev_ku = KnowledgeUnit(
+            id='ku-1', concept='Merge Sort', content='O(n^2)', modality='ocr',
+            source_id='src-1', status='superseded', version=1, confidence=0.8, page=2
+        )
+        mock_ev = Evidence(
+            id='ev-1', knowledge_unit_id='ku-2', text='Merge sort is O(n log n)',
+            modality='formula', page=6, extraction_confidence=0.95
+        )
+
+        async def override_db():
+            mock_session = AsyncMock()
+            # 1. Main unit
+            res_unit = MagicMock()
+            res_unit.scalar_one_or_none.return_value = mock_ku
+            # 2. Source
+            res_src = MagicMock()
+            res_src.scalar_one_or_none.return_value = mock_src
+            # 3. Evidence
+            res_ev = MagicMock()
+            res_ev.scalars.return_value.all.return_value = [mock_ev]
+            # 4. Previous unit in chain
+            res_prev = MagicMock()
+            res_prev.scalar_one_or_none.return_value = mock_prev_ku
+            # 5. Look for newer unit (none)
+            res_newer = MagicMock()
+            res_newer.scalar_one_or_none.return_value = None
+            # 6. Conflicts
+            res_conf = MagicMock()
+            res_conf.scalars.return_value.all.return_value = []
+
+            mock_session.execute = AsyncMock(side_effect=[
+                res_unit, res_src, res_ev, res_prev, res_newer, res_conf
+            ])
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_db
+        response = client.get('/api/knowledge-units/ku-2')
+        assert response.status_code == 200
+        data = response.json()
+        assert data['id'] == 'ku-2'
+        assert data['source']['title'] == 'Algorithms PDF'
+        assert len(data['evidence']) == 1
+        assert len(data['lineage']) == 2
+        assert data['lineage'][0]['id'] == 'ku-1'
+        assert data['lineage'][1]['id'] == 'ku-2'
+        app.dependency_overrides.clear()
+
+
+def test_get_evaluation_artifacts(client):
+    """GET /api/evaluation/artifacts reads actual benchmark files from disk."""
+    response = client.get('/api/evaluation/artifacts')
+    assert response.status_code == 200
+    data = response.json()
+    assert 'benchmarks' in data
+    assert 'synthetic' in data['benchmarks']
+    assert 'real_video' in data['benchmarks']
+    assert 'ablations' in data
+    assert len(data['benchmarks']['synthetic']['results']) >= 6
+    assert len(data['ablations']['conditions']) >= 7
+
+

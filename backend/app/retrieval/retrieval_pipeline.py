@@ -110,6 +110,15 @@ class Retriever:
                         'from_vekg': True,
                     })
 
+        # Filter strictly by source_id to prevent any cross-source candidate leakage
+        if source_id:
+            results = [
+                r for r in results
+                if units_by_id.get(r.get('unit_id'), {}).get('source_id') == source_id
+                or r.get('payload', {}).get('source_id') == source_id
+                or (not units_by_id.get(r.get('unit_id')) and not r.get('payload', {}).get('source_id'))
+            ]
+
         # Sort by final score
         results.sort(key=lambda r: r.get('final_score', 0.0), reverse=True)
         return results[:top_k]
@@ -408,7 +417,7 @@ class RetrievalPipeline:
             (str(e.get('concept', '')) + ' ' + str(e.get('text') or e.get('content') or '')).lower()
             for e in evidence_units
         )
-        overlap_subj = [t for t in subject_tokens if t in ev_text]
+        overlap_subj = [t for t in subject_tokens if re.search(r'\b' + re.escape(t) + r'\b', ev_text)]
 
         if max_score < 0.20:
             return False, f"Relevance score {max_score:.2f} below minimum sufficiency threshold (0.20)"
@@ -473,16 +482,18 @@ class RetrievalPipeline:
         # 4. Select evidence
         selected = self.reranker.select_evidence(ranked, top_k=top_k)
 
-        # 5. Build raw evidence units
+        # 5. Build raw evidence units (strictly bounded to requested source)
         raw_evidence_units = []
         for r in selected:
             payload = r.get('payload', {})
             unit = units_by_id.get(r['unit_id'], {})
             merged = {**payload, **unit, 'id': r['unit_id']}
-            raw_evidence_units.append(merged)
+            if not source_id or not merged.get('source_id') or merged.get('source_id') == source_id:
+                raw_evidence_units.append(merged)
 
         # 6. VEKG correction traversal: substitute superseded units with active corrections
         evidence_units = []
+        lineage_substitutions = []
         vekg_instance = getattr(self.retriever, 'vekg', None)
         for unit in raw_evidence_units:
             if unit.get('status') == 'superseded' and vekg_instance is not None:
@@ -490,15 +501,38 @@ class RetrievalPipeline:
                 active_u = lineage[0] if lineage else None
                 if active_u:
                     active_dict = active_u.__dict__ if hasattr(active_u, '__dict__') else dict(active_u)
-                    evidence_units.append(active_dict)
+                    if not source_id or not active_dict.get('source_id') or active_dict.get('source_id') == source_id:
+                        evidence_units.append(active_dict)
+                        lineage_substitutions.append({
+                            'superseded_id': unit.get('id'),
+                            'active_id': active_dict.get('id'),
+                            'concept': active_dict.get('concept'),
+                            'reason': active_dict.get('correction_reason', 'Superseded version resolved via VEKG'),
+                        })
+                    else:
+                        evidence_units.append(unit)
                 else:
                     newer_id = next((uid for uid, u in units_by_id.items() if u.get('previous_version_id') == unit.get('id')), None)
                     if newer_id and newer_id in units_by_id:
-                        evidence_units.append({**units_by_id[newer_id], 'id': newer_id})
+                        newer_unit = {**units_by_id[newer_id], 'id': newer_id}
+                        if not source_id or not newer_unit.get('source_id') or newer_unit.get('source_id') == source_id:
+                            evidence_units.append(newer_unit)
+                            lineage_substitutions.append({
+                                'superseded_id': unit.get('id'),
+                                'active_id': newer_id,
+                                'concept': newer_unit.get('concept'),
+                                'reason': newer_unit.get('correction_reason', 'Superseded version resolved via lineage ID'),
+                            })
+                        else:
+                            evidence_units.append(unit)
                     else:
                         evidence_units.append(unit)
             else:
                 evidence_units.append(unit)
+
+        # Ensure conflicts are also strictly scoped to requested source
+        if source_id and conflicts:
+            conflicts = [c for c in conflicts if not c.get('source_id') or c.get('source_id') == source_id]
 
         # 7. Grounded evidence sufficiency & abstention gate
         max_score = ranked[0][1] if ranked else 0.0
@@ -525,6 +559,7 @@ class RetrievalPipeline:
             'strategy_used': strategy,
             'routing_explanation': routing['explanation'],
             'conflicts': relevant_conflicts,
+            'lineage_substitutions': lineage_substitutions,
             'abstain': should_abstain,
             'abstention_reason': reason if should_abstain else None,
             'latency_ms': round(latency_ms, 2),

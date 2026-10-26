@@ -100,6 +100,7 @@ async def run_ingestion_pipeline(
                     src.upload_date = meta.get('upload_date')
                     await db.commit()
                 source_type = 'video' if file_path and Path(file_path).suffix in ('.mp4', '.mkv', '.webm') else 'audio'
+                await _update_job(db, job_id, current_step='Media downloaded, preparing extraction', progress=0.12)
 
             if not file_path or not Path(file_path).exists():
                 raise FileNotFoundError(f'Source file not found: {file_path}')
@@ -581,6 +582,10 @@ async def run_ingestion_pipeline(
         except Exception as e:
             logger.error('Ingestion failed for source %s: %s', source_id, e, exc_info=True)
             try:
+                await db.rollback()
+            except Exception:
+                pass
+            try:
                 await _update_job(
                     db, job_id,
                     status='failed',
@@ -592,8 +597,8 @@ async def run_ingestion_pipeline(
                 if src:
                     src.status = 'failed'
                     await db.commit()
-            except Exception:
-                pass
+            except Exception as update_err:
+                logger.error('Failed to update job status to failed: %s', update_err)
 
 
 # Need KnowledgeUnit import inside the function to avoid circular imports

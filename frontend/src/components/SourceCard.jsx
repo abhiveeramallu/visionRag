@@ -125,13 +125,24 @@ export default function SourceCard({ source, onDeleted }) {
             </div>
           )}
 
-          <Link
-            to={isProcessing ? `/processing/${source.id}` : `/source/${source.id}`}
-            className="mt-1 btn-secondary py-2 text-xs font-semibold flex items-center justify-center gap-1.5"
-          >
-            {isProcessing ? 'View Progress' : 'Open'}
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
+          <div className="mt-1 flex items-center gap-2">
+            <Link
+              to={isProcessing ? `/processing/${source.id}` : `/source/${source.id}`}
+              className="flex-1 btn-secondary py-2 text-xs font-semibold flex items-center justify-center gap-1.5"
+            >
+              {isProcessing ? 'View Progress' : 'Open'}
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+            {!isProcessing && source.status === 'completed' && (
+              <Link
+                to={`/chat?source_id=${source.id}`}
+                className="btn-primary py-2 px-3 text-xs font-semibold flex items-center justify-center gap-1"
+                title="Open AI Chat for this source"
+              >
+                Chat
+              </Link>
+            )}
+          </div>
         </>
       )}
     </div>

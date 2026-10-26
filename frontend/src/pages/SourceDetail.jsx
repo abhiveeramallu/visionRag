@@ -246,10 +246,18 @@ export default function SourceDetail() {
         <MediaPanel source={source} />
 
         <div className="card flex flex-col h-[600px]">
-          <h2 className="text-sm font-bold text-ink-900 mb-3 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-primary-600" />
-            Ask about this lecture
-          </h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-bold text-ink-900 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-primary-600" />
+              Ask about this lecture
+            </h2>
+            <Link
+              to={`/chat?source_id=${source.id}`}
+              className="text-xs font-semibold text-primary-600 hover:text-primary-700"
+            >
+              Open Full AI Chat &rarr;
+            </Link>
+          </div>
 
           <div className="flex-1 overflow-y-auto space-y-3 pr-1">
             {messages.map((m, i) => (

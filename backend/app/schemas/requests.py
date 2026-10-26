@@ -11,31 +11,6 @@ class SourceType(str, Enum):
     AUDIO = 'audio'
 
 
-class SummaryType(str, Enum):
-    OVERALL = 'overall'
-    TOPIC = 'topic'
-    TIMESTAMPED = 'timestamped'
-
-
-class QuizType(str, Enum):
-    MCQ = 'mcq'
-    TRUE_FALSE = 'true_false'
-    FILL_BLANK = 'fill_blank'
-    SHORT_ANSWER = 'short_answer'
-
-
-class Difficulty(str, Enum):
-    EASY = 'easy'
-    MEDIUM = 'medium'
-    HARD = 'hard'
-
-
-class NotesType(str, Enum):
-    CONCISE = 'concise'
-    DETAILED = 'detailed'
-    REVISION = 'revision'
-
-
 class YouTubeIngestRequest(BaseModel):
     url: str = Field(..., description='YouTube video URL')
     title: Optional[str] = Field(None, description='Optional custom title')
@@ -54,29 +29,5 @@ class QueryRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=20, description='Number of evidence items to retrieve')
     include_evidence: bool = Field(default=True)
     include_conflicts: bool = Field(default=True)
-
-
-class SummaryRequest(BaseModel):
-    source_id: str
-    summary_type: SummaryType = Field(default=SummaryType.OVERALL)
-    topic: Optional[str] = Field(None, description='Topic for topic-specific summary')
-
-
-class QuizRequest(BaseModel):
-    source_id: str
-    quiz_type: QuizType = Field(default=QuizType.MCQ)
-    difficulty: Difficulty = Field(default=Difficulty.MEDIUM)
-    num_questions: int = Field(default=5, ge=1, le=30)
-    topic: Optional[str] = None
-
-
-class FlashcardRequest(BaseModel):
-    source_id: str
-    num_cards: int = Field(default=10, ge=1, le=50)
-    topic: Optional[str] = None
-
-
-class NotesRequest(BaseModel):
-    source_id: str
-    notes_type: NotesType = Field(default=NotesType.CONCISE)
-    topic: Optional[str] = None
+    conversation_id: Optional[str] = Field(default=None, description='Optional conversation session ID')
+    save_history: bool = Field(default=True, description='Whether to persist turn in conversation history')

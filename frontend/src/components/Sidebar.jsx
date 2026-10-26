@@ -1,21 +1,18 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import {
-  Home, Library, MessageSquare, FileText, HelpCircle, Layers,
-  StickyNote, Share2, X, Loader2,
+  Home, Database, MessageSquare, Share2, BarChart3,
+  X, Loader2, Library,
 } from 'lucide-react'
 import { getSources } from '../services/api'
 import { mockSources } from '../data/mockData'
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Home', icon: Home, match: (p) => p === '/' },
-  { to: '/sources', label: 'My Sources', icon: Library, match: (p) => p.startsWith('/sources') },
+  { to: '/', label: 'Home / Sources', icon: Home, match: (p) => p === '/' || p.startsWith('/sources') || p.startsWith('/source/') },
+  { to: '/knowledge-units', label: 'Knowledge Units', icon: Database, match: (p) => p.startsWith('/knowledge-units') },
+  { to: '/knowledge-graph', label: 'Knowledge Graph / VEKG', icon: Share2, match: (p) => p.startsWith('/knowledge-graph') || p.startsWith('/knowledge-evolution') },
   { to: '/chat', label: 'AI Chat', icon: MessageSquare, match: (p) => p.startsWith('/chat') },
-  { to: '/summary', label: 'Summaries', icon: FileText, match: (p) => p.startsWith('/summary') },
-  { to: '/quiz', label: 'Quizzes', icon: HelpCircle, match: (p) => p.startsWith('/quiz') },
-  { to: '/flashcards', label: 'Flashcards', icon: Layers, match: (p) => p.startsWith('/flashcards') },
-  { to: '/notes', label: 'Notes', icon: StickyNote, match: (p) => p.startsWith('/notes') },
-  { to: '/knowledge-graph', label: 'Knowledge Graph', icon: Share2, match: (p) => p.startsWith('/knowledge') },
+  { to: '/evaluation', label: 'Evaluation', icon: BarChart3, match: (p) => p.startsWith('/evaluation') },
 ]
 
 export default function Sidebar({ open, onClose }) {
