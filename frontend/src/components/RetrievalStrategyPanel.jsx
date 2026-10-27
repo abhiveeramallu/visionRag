@@ -2,9 +2,9 @@ import React, { useState } from 'react'
 import { ChevronDown, ChevronUp, CheckCircle2, Circle, Route } from 'lucide-react'
 
 const STRATEGIES = {
-  semantic: { label: 'Semantic Search', keys: ['semantic', 'graph', 'hybrid'] },
-  keyword: { label: 'Keyword Search (BM25)', keys: ['keyword', 'lexical', 'hybrid'] },
-  graph: { label: 'Knowledge Graph', keys: ['graph', 'hybrid'] },
+  semantic: { label: 'Semantic Search', keys: ['semantic', 'dense', 'hybrid'] },
+  keyword: { label: 'Keyword Search (BM25)', keys: ['keyword', 'lexical', 'hybrid', 'bm25', 'code', 'formula'] },
+  graph: { label: 'Knowledge Graph', keys: ['graph', 'vekg', 'lineage', 'hybrid'] },
   timestamp: { label: 'Timestamp Search', keys: ['timestamp', 'temporal'] },
 }
 
@@ -14,11 +14,15 @@ const STRATEGIES = {
  */
 export default function RetrievalStrategyPanel({ strategyUsed }) {
   const [open, setOpen] = useState(false)
-  const strategy = (strategyUsed || 'semantic+graph').toLowerCase()
+  const strategy = (strategyUsed || 'hybrid').toLowerCase()
 
-  const activeKeys = Object.entries(STRATEGIES).filter(([, cfg]) =>
-    cfg.keys.some((k) => strategy.includes(k))
-  )
+  const isHybrid = strategy.includes('hybrid')
+  const activeKeys = Object.entries(STRATEGIES).filter(([key, cfg]) => {
+    if (isHybrid) {
+      return key === 'semantic' || key === 'keyword' || key === 'graph'
+    }
+    return cfg.keys.some((k) => strategy.includes(k))
+  })
   const active = activeKeys.length > 0 ? activeKeys : [['semantic', STRATEGIES.semantic]]
 
   return (

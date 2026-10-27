@@ -18,9 +18,14 @@ _STOP_WORDS = {
 
 
 def _tokenize(text: str) -> List[str]:
-    """Lowercase, split on non-word chars, remove stop words and empty tokens."""
+    """Lowercase, split on non-word chars, remove stop words, preserving technical symbols."""
     tokens = re.split(r'\W+', text.lower())
-    return [t for t in tokens if t and t not in _STOP_WORDS and len(t) > 1]
+    # Preserve single-letter technical variables (e.g. n in O(n), v, m, c, k, x, y)
+    valid_single_letters = {'n', 'v', 'm', 'c', 'k', 'x', 'y', 'o', 'a', 'b'}
+    return [
+        t for t in tokens
+        if t and t not in _STOP_WORDS and (len(t) > 1 or t in valid_single_letters)
+    ]
 
 
 class LexicalIndex:
@@ -121,13 +126,26 @@ class LexicalIndex:
             return []
 
         scores = self._bm25.get_scores(query_tokens)
+        query_phrase = query.lower().strip()
 
-        # Build (index, score) pairs filtered by source_id
-        candidates = [
-            (i, float(scores[i]))
-            for i, unit in enumerate(self._units)
-            if scores[i] > 0 and (source_id is None or unit.get('source_id') == source_id)
-        ]
+        # Build (index, score) pairs filtered by source_id with exact phrase boost
+        candidates = []
+        for i, unit in enumerate(self._units):
+            if source_id is not None and unit.get('source_id') != source_id:
+                continue
+
+            raw_score = float(scores[i])
+            content_lower = (unit.get('content') or '').lower()
+            concept_lower = (unit.get('concept') or '').lower()
+
+            # Exact phrase match boost: when the exact multi-word query or technical term appears
+            if len(query_tokens) > 1 and (query_phrase in content_lower or query_phrase in concept_lower):
+                raw_score += 3.0
+            elif any(qt in concept_lower for qt in query_tokens):
+                raw_score += 1.5
+
+            if raw_score > 0:
+                candidates.append((i, raw_score))
         candidates.sort(key=lambda x: x[1], reverse=True)
 
         return [

@@ -195,8 +195,13 @@ class HybridIndex:
                 for i, r in enumerate(results)
             ]
 
-        # Default: hybrid fusion
-        semantic_results = await self.vector_index.search(query, source_id, top_k * 2)
+        # Default: hybrid fusion with fault-tolerant vector handling
+        try:
+            semantic_results = await self.vector_index.search(query, source_id, top_k * 2)
+        except Exception as e:
+            logger.warning('Semantic vector search failed during hybrid fusion: %s', e)
+            semantic_results = []
+
         lexical_results = self.lexical_index.search(query, source_id, top_k * 2)
 
         fused = await self._fuse_scores(semantic_results, lexical_results, units_by_id)

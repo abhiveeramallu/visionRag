@@ -9,6 +9,52 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 logger = logging.getLogger(__name__)
 
 
+def _extract_temporal_targets(query: str) -> Dict[str, Any]:
+    """
+    Extract timestamps (MM:SS, HH:MM:SS, minutes, seconds), ranges, or page/slide numbers from query.
+    """
+    res = {'target_sec': None, 'start_sec': None, 'end_sec': None, 'page': None, 'slide': None}
+    q = query.lower()
+
+    # 1. MM:SS or HH:MM:SS (e.g. 05:15 or 1:30:00)
+    time_matches = re.findall(r'\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b', q)
+    if time_matches:
+        parts = time_matches[0]
+        if parts[0]:
+            res['target_sec'] = float(int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2]))
+        else:
+            res['target_sec'] = float(int(parts[1]) * 60 + int(parts[2]))
+        if len(time_matches) > 1:
+            p2 = time_matches[1]
+            sec2 = float(int(p2[0] or 0) * 3600 + int(p2[1]) * 60 + int(p2[2]))
+            res['start_sec'] = min(res['target_sec'], sec2)
+            res['end_sec'] = max(res['target_sec'], sec2)
+
+    # 2. "minute X" or "X minutes" or "X min"
+    if res['target_sec'] is None:
+        min_m = re.search(r'\b(?:at|around|in)?\s*(?:minute\s*(\d+)|(\d+)\s*(?:minute|minutes|min))\b', q)
+        if min_m:
+            mins = int(min_m.group(1) or min_m.group(2))
+            res['target_sec'] = float(mins * 60)
+
+    # 3. "X seconds" or "X sec" or "X s"
+    if res['target_sec'] is None:
+        sec_m = re.search(r'\b(?:at|around|in)?\s*(\d+)\s*(?:seconds|second|sec|s)\b', q)
+        if sec_m:
+            res['target_sec'] = float(sec_m.group(1))
+
+    # 4. Page or Slide references (for documents)
+    page_m = re.search(r'\bpage\s*(\d+)\b', q)
+    if page_m:
+        res['page'] = int(page_m.group(1))
+
+    slide_m = re.search(r'\bslide\s*(\d+)\b', q)
+    if slide_m:
+        res['slide'] = int(slide_m.group(1))
+
+    return res
+
+
 # ---------------------------------------------------------------------------
 # Retriever
 # ---------------------------------------------------------------------------
@@ -34,29 +80,20 @@ class Retriever:
     async def retrieve(
         self,
         query: str,
-        source_id: str,
+        source_id: Optional[str],
         strategy: str,
         top_k: int = 10,
         modality_filter: Optional[str] = None,
         units_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+        timestamp_filter: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Retrieve knowledge unit dicts ranked by relevance.
-
-        Parameters
-        ----------
-        query : str
-        source_id : str
-        strategy : str  — value from RetrievalStrategy enum
-        top_k : int
-        modality_filter : str, optional  — e.g. 'formula', 'code'
-        units_by_id : dict, optional  — unit_id -> unit dict for confidence lookup
-
-        Returns
-        -------
-        List of result dicts from HybridIndex (includes unit_id, final_score, payload).
+        Supports Semantic, Keyword (BM25), Knowledge Graph (VEKG), Timestamp, and Hybrid strategies.
         """
         units_by_id = units_by_id or {}
+        is_all_sources = not source_id or source_id.lower() in ('all', 'all_sources', '*')
+        target_source_id = None if is_all_sources else source_id
 
         # Map strategy string to HybridIndex strategy param
         index_strategy_map = {
@@ -72,50 +109,183 @@ class Retriever:
 
         results = await self.hybrid_index.search(
             query=query,
-            source_id=source_id,
+            source_id=target_source_id,
             top_k=top_k,
             strategy=index_strategy,
             units_by_id=units_by_id,
         )
 
-        # Apply modality priority/boost if requested (soft priority instead of hard filtering)
+        # 1. Modality priority or hard filter
         if modality_filter and results:
             for r in results:
-                if r.get('payload', {}).get('modality') == modality_filter:
-                    r['final_score'] = min(1.0, r.get('final_score', 0.0) * 1.30)
+                unit_mod = (
+                    units_by_id.get(r.get('unit_id'), {}).get('modality')
+                    or r.get('payload', {}).get('modality')
+                )
+                if unit_mod == modality_filter:
+                    r['final_score'] = min(1.0, r.get('final_score', 0.0) * 1.35)
             results.sort(key=lambda r: r.get('final_score', 0.0), reverse=True)
 
-        # Augment with VEKG concept search for knowledge_graph strategy
-        if strategy == 'knowledge_graph' and self.vekg is not None:
-            vekg_units = self.vekg.search_by_concept(query, threshold=0.4)
-            vekg_ids = {u.id for u in vekg_units}
-            # Add VEKG units not already in results
+        # 2. Timestamp & Temporal Location Matching
+        temporal_info = _extract_temporal_targets(query)
+        if timestamp_filter:
+            if 'target_sec' in timestamp_filter and timestamp_filter['target_sec'] is not None:
+                temporal_info['target_sec'] = float(timestamp_filter['target_sec'])
+            if 'start_sec' in timestamp_filter and timestamp_filter['start_sec'] is not None:
+                temporal_info['start_sec'] = float(timestamp_filter['start_sec'])
+            if 'end_sec' in timestamp_filter and timestamp_filter['end_sec'] is not None:
+                temporal_info['end_sec'] = float(timestamp_filter['end_sec'])
+            if 'page' in timestamp_filter and timestamp_filter['page'] is not None:
+                temporal_info['page'] = int(timestamp_filter['page'])
+            if 'slide' in timestamp_filter and timestamp_filter['slide'] is not None:
+                temporal_info['slide'] = int(timestamp_filter['slide'])
+        is_timestamp_query = (
+            strategy == 'timestamp_aware'
+            or temporal_info['target_sec'] is not None
+            or temporal_info['start_sec'] is not None
+            or temporal_info['page'] is not None
+            or temporal_info['slide'] is not None
+        )
+
+        if is_timestamp_query and units_by_id:
+            target_sec = temporal_info.get('target_sec')
+            range_start = temporal_info.get('start_sec')
+            range_end = temporal_info.get('end_sec')
+            target_page = temporal_info.get('page')
+            target_slide = temporal_info.get('slide')
+
+            # Score adjustments for existing results
+            matched_uids = set()
+            for r in results:
+                u = units_by_id.get(r['unit_id'], {})
+                u_start = u.get('timestamp_start')
+                u_end = u.get('timestamp_end')
+                u_page = u.get('page')
+                u_slide = u.get('slide')
+
+                if target_sec is not None and u_start is not None:
+                    end_sec = u_end if u_end is not None else u_start + 15.0
+                    if u_start <= target_sec <= end_sec:
+                        r['final_score'] = min(1.0, r['final_score'] + 0.60)
+                        r['temporal_exact'] = True
+                        matched_uids.add(r['unit_id'])
+                    else:
+                        delta = min(abs(u_start - target_sec), abs(end_sec - target_sec))
+                        if delta <= 90.0:
+                            boost = 0.45 / (1.0 + delta / 25.0)
+                            r['final_score'] = min(1.0, r['final_score'] + boost)
+                            matched_uids.add(r['unit_id'])
+
+                elif range_start is not None and range_end is not None and u_start is not None:
+                    end_sec = u_end if u_end is not None else u_start + 15.0
+                    if not (end_sec < range_start or u_start > range_end):
+                        r['final_score'] = min(1.0, r['final_score'] + 0.55)
+                        matched_uids.add(r['unit_id'])
+
+                elif target_page is not None and u_page == target_page:
+                    r['final_score'] = min(1.0, r['final_score'] + 0.50)
+                    matched_uids.add(r['unit_id'])
+
+                elif target_slide is not None and u_slide == target_slide:
+                    r['final_score'] = min(1.0, r['final_score'] + 0.50)
+                    matched_uids.add(r['unit_id'])
+
+            # If the exact temporal unit was missed by textual search, find and inject it
+            if target_sec is not None or target_page is not None or target_slide is not None:
+                for uid, u in units_by_id.items():
+                    if uid in matched_uids:
+                        continue
+                    if target_source_id and u.get('source_id') != target_source_id:
+                        continue
+
+                    u_start = u.get('timestamp_start')
+                    u_end = u.get('timestamp_end')
+                    if target_sec is not None and u_start is not None:
+                        end_sec = u_end if u_end is not None else u_start + 15.0
+                        if u_start <= target_sec <= end_sec:
+                            results.append({
+                                'unit_id': uid,
+                                'final_score': 0.88,
+                                'semantic_score': 0.0,
+                                'lexical_score': 0.0,
+                                'knowledge_confidence': u.get('confidence', 0.95),
+                                'payload': {
+                                    'knowledge_unit_id': uid,
+                                    'source_id': u.get('source_id'),
+                                    'modality': u.get('modality'),
+                                    'timestamp_start': u_start,
+                                    'timestamp_end': u_end,
+                                    'content_preview': u.get('content', '')[:200],
+                                    'from_temporal_search': True,
+                                },
+                            })
+                            matched_uids.add(uid)
+                    elif target_page is not None and u.get('page') == target_page:
+                        results.append({
+                            'unit_id': uid,
+                            'final_score': 0.85,
+                            'semantic_score': 0.0,
+                            'lexical_score': 0.0,
+                            'knowledge_confidence': u.get('confidence', 0.95),
+                            'payload': {'knowledge_unit_id': uid, 'page': target_page},
+                        })
+                        matched_uids.add(uid)
+                    elif target_slide is not None and u.get('slide') == target_slide:
+                        results.append({
+                            'unit_id': uid,
+                            'final_score': 0.85,
+                            'semantic_score': 0.0,
+                            'lexical_score': 0.0,
+                            'knowledge_confidence': u.get('confidence', 0.95),
+                            'payload': {'knowledge_unit_id': uid, 'slide': target_slide},
+                        })
+                        matched_uids.add(uid)
+
+        # 3. Knowledge Graph / VEKG Traversal
+        if (strategy == 'knowledge_graph' or strategy == 'conceptual') and self.vekg is not None:
+            graph_matches = self.vekg.traverse_related_concepts(
+                query=query,
+                threshold=0.35,
+                source_id=target_source_id,
+                max_results=top_k,
+            )
             existing_ids = {r['unit_id'] for r in results}
-            for unit in vekg_units:
-                if unit.id not in existing_ids and unit.source_id == source_id:
+            for gm in graph_matches:
+                unit = gm['unit']
+                if unit.id not in existing_ids:
                     results.append({
                         'unit_id': unit.id,
-                        'final_score': unit.confidence * 0.8,
+                        'final_score': round(gm['score'], 4),
                         'semantic_score': 0.0,
                         'lexical_score': 0.0,
                         'knowledge_confidence': unit.confidence,
                         'payload': {
                             'knowledge_unit_id': unit.id,
+                            'source_id': unit.source_id,
                             'concept': unit.concept,
                             'modality': unit.modality,
                             'confidence': unit.confidence,
                             'status': unit.status,
                             'content_preview': unit.content[:200],
+                            'graph_relations': gm.get('relations', []),
                         },
                         'from_vekg': True,
                     })
+                else:
+                    # Boost existing result that has graph connectivity
+                    for r in results:
+                        if r['unit_id'] == unit.id:
+                            r['final_score'] = min(1.0, r['final_score'] * 1.25)
+                            r['from_vekg'] = True
+                            if 'payload' in r:
+                                r['payload']['graph_relations'] = gm.get('relations', [])
 
-        # Filter strictly by source_id to prevent any cross-source candidate leakage
-        if source_id:
+        # Filter strictly by source_id when querying a single source
+        if target_source_id:
             results = [
                 r for r in results
-                if units_by_id.get(r.get('unit_id'), {}).get('source_id') == source_id
-                or r.get('payload', {}).get('source_id') == source_id
+                if units_by_id.get(r.get('unit_id'), {}).get('source_id') == target_source_id
+                or r.get('payload', {}).get('source_id') == target_source_id
                 or (not units_by_id.get(r.get('unit_id')) and not r.get('payload', {}).get('source_id'))
             ]
 
@@ -409,17 +579,57 @@ class RetrievalPipeline:
             'time', 'complexity', 'algorithm', 'formula', 'data', 'structure', 'state',
             'value', 'used', 'using', 'calculate', 'function', 'case', 'equation', 'rule',
             'slide', 'slides', 'lecture', 'video', 'course', 'material', 'notes',
-            'document', 'page', 'work', 'stated', 'mentioned', 'according', 'instructor', 'professor'
+            'document', 'page', 'work', 'stated', 'mentioned', 'according', 'instructor', 'professor',
+            'discussed', 'happens', 'happened', 'say', 'says', 'talking', 'model', 'summary', 'overview',
         }
+
+        # Check for temporal or page targets
+        temporal_info = _extract_temporal_targets(query)
+        is_temporal_lookup = (
+            temporal_info['target_sec'] is not None
+            or temporal_info['start_sec'] is not None
+            or temporal_info['page'] is not None
+            or temporal_info['slide'] is not None
+        )
+        if is_temporal_lookup:
+            t_sec = temporal_info.get('target_sec')
+            t_page = temporal_info.get('page')
+            t_slide = temporal_info.get('slide')
+            for ev in evidence_units:
+                u_start = ev.get('timestamp_start')
+                u_end = ev.get('timestamp_end')
+                if t_sec is not None and u_start is not None:
+                    end_sec = u_end if u_end is not None else u_start + 25.0
+                    if (u_start - 15.0) <= t_sec <= (end_sec + 15.0):
+                        return True, f"Temporal target {t_sec}s grounded in timestamp evidence ({u_start}-{u_end}s)"
+                if t_page is not None and ev.get('page') == t_page:
+                    return True, f"Page {t_page} grounded in document evidence"
+                if t_slide is not None and ev.get('slide') == t_slide:
+                    return True, f"Slide {t_slide} grounded in slide evidence"
+
+        def _stem(w: str) -> str:
+            w_str = w.lower().strip()
+            if w_str.endswith('ies') and len(w_str) > 4:
+                return w_str[:-3] + 'y'
+            if w_str.endswith('es') and len(w_str) > 3:
+                return w_str[:-2]
+            if w_str.endswith('s') and not w_str.endswith('ss') and len(w_str) > 2:
+                return w_str[:-1]
+            return w_str
+
         q_tokens = re.findall(r'\b[a-zA-Z0-9_\^²³]{2,}\b', query.lower())
         content_tokens = [t for t in q_tokens if t not in STOPWORDS]
-        subject_tokens = [t for t in content_tokens if t not in GENERIC_QUERY_TERMS]
+        subject_tokens = [t for t in content_tokens if t not in GENERIC_QUERY_TERMS and not t.isdigit()]
 
         ev_text = ' '.join(
             (str(e.get('concept', '')) + ' ' + str(e.get('text') or e.get('content') or '')).lower()
             for e in evidence_units
         )
-        overlap_subj = [t for t in subject_tokens if re.search(r'\b' + re.escape(t) + r'\b', ev_text)]
+        ev_words = {_stem(w) for w in re.findall(r'\b[a-zA-Z0-9_\^²³]{2,}\b', ev_text)}
+        overlap_subj = [
+            t for t in subject_tokens
+            if _stem(t) in ev_words or re.search(r'\b' + re.escape(t) + r'\b', ev_text)
+        ]
 
         if max_score < 0.20:
             return False, f"Relevance score {max_score:.2f} below minimum sufficiency threshold (0.20)"
@@ -432,12 +642,15 @@ class RetrievalPipeline:
     async def run(
         self,
         query: str,
-        source_id: str,
+        source_id: Optional[str],
         source_type: str,
         top_k: int = 5,
         include_conflicts: bool = True,
         conflicts: Optional[List[Dict[str, Any]]] = None,
         units_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+        requested_strategy: Optional[str] = None,
+        modality_filter: Optional[str] = None,
+        timestamp_filter: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Execute the full retrieval pipeline.
@@ -458,14 +671,14 @@ class RetrievalPipeline:
         conflicts = conflicts or []
 
         # 1. Route
-        routing = self.router.route(query, source_type)
+        routing = self.router.route(query, source_type, requested_strategy=requested_strategy)
         strategy = routing['strategy']
         top_k_eff = routing.get('top_k_override') or top_k
-        modality_filter = routing.get('modality_filter')
+        active_modality_filter = modality_filter or routing.get('modality_filter')
 
         logger.info(
-            'Query routed: type=%s strategy=%s top_k=%d',
-            routing['query_type'], strategy, top_k_eff,
+            'Query routed: type=%s strategy=%s top_k=%d requested=%s',
+            routing['query_type'], strategy, top_k_eff, requested_strategy,
         )
 
         # 2. Retrieve
@@ -474,8 +687,9 @@ class RetrievalPipeline:
             source_id=source_id,
             strategy=strategy,
             top_k=top_k_eff * 2,  # over-retrieve then rerank
-            modality_filter=modality_filter,
+            modality_filter=active_modality_filter,
             units_by_id=units_by_id,
+            timestamp_filter=timestamp_filter,
         )
 
         # 3. Rerank
@@ -484,13 +698,14 @@ class RetrievalPipeline:
         # 4. Select evidence
         selected = self.reranker.select_evidence(ranked, top_k=top_k)
 
-        # 5. Build raw evidence units (strictly bounded to requested source)
+        # 5. Build raw evidence units (strictly bounded to requested source unless all sources)
         raw_evidence_units = []
+        is_all_sources = not source_id or source_id.lower() in ('all', 'all_sources', '*')
         for r in selected:
             payload = r.get('payload', {})
             unit = units_by_id.get(r['unit_id'], {})
             merged = {**payload, **unit, 'id': r['unit_id']}
-            if not source_id or not merged.get('source_id') or merged.get('source_id') == source_id:
+            if is_all_sources or not merged.get('source_id') or merged.get('source_id') == source_id:
                 raw_evidence_units.append(merged)
 
         # 6. VEKG correction traversal: substitute superseded units with active corrections
@@ -532,8 +747,8 @@ class RetrievalPipeline:
             else:
                 evidence_units.append(unit)
 
-        # Ensure conflicts are also strictly scoped to requested source
-        if source_id and conflicts:
+        # Ensure conflicts are also strictly scoped to requested source unless searching all sources
+        if not is_all_sources and source_id and conflicts:
             conflicts = [c for c in conflicts if not c.get('source_id') or c.get('source_id') == source_id]
 
         # 7. Grounded evidence sufficiency & abstention gate

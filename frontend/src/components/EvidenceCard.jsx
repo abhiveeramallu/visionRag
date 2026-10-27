@@ -39,16 +39,23 @@ export default function EvidenceCard({ evidence }) {
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-3 shadow-xs hover:shadow-sm transition-shadow space-y-2 text-xs">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-md border text-[11px] font-semibold ${badge.bg}`}>
           <Icon className="w-3 h-3" />
           <span>{badge.label}</span>
         </span>
 
-        <span className="font-mono text-gray-500 font-medium">
+        <span className="font-mono text-gray-500 font-medium text-[11px]">
           📍 {formatLocation()}
         </span>
       </div>
+
+      {evidence.source_title && (
+        <div className="text-[11px] text-primary-700 bg-primary-50/50 px-2 py-0.5 rounded border border-primary-100 font-medium truncate flex items-center gap-1">
+          <span className="text-ink-400 text-[10px] uppercase font-bold tracking-wider">Source:</span>
+          <span className="truncate">{evidence.source_title}</span>
+        </div>
+      )}
 
       <p className={`text-gray-700 leading-relaxed font-sans ${expanded ? '' : 'line-clamp-2'}`}>
         "{evidence.text || evidence.content}"

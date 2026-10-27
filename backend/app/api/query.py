@@ -3,12 +3,15 @@ Query, source, and knowledge endpoints for VisionRAG-X.
 """
 import json
 import logging
+import mimetypes
 from pathlib import Path
+import re
 import sys
 import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
@@ -35,65 +38,103 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
 
     settings = get_settings()
 
-    # Verify source exists and is completed
-    result = await db.execute(select(Source).where(Source.id == request.source_id))
-    source = result.scalar_one_or_none()
-    if not source:
-        raise HTTPException(status_code=404, detail=f'Source {request.source_id} not found')
-    if source.status != 'completed':
-        raise HTTPException(status_code=409, detail=f'Source processing is not complete (status: {source.status})')
+    is_all_sources = request.source_id.strip().lower() in ('all', 'all_sources', '*')
 
-    # Load all knowledge units from DB for this source (for VEKG reconstruction)
-    ku_result = await db.execute(
-        select(KnowledgeUnit)
-        .where(KnowledgeUnit.source_id == request.source_id)
-        .order_by(KnowledgeUnit.created_at.asc())
-        .limit(2000)
-    )
-    units = ku_result.scalars().all()
-    if len(units) >= 2000:
-        logger.warning('Source %s exceeded 2000 active knowledge units; retrieved top 2000', request.source_id)
-    units_as_dicts = [_ku_to_dict(u) for u in units]
-    units_by_id = {u['id']: u for u in units_as_dicts}
+    if is_all_sources:
+        # Load all completed sources
+        src_res = await db.execute(select(Source).where(Source.status == 'completed'))
+        sources = src_res.scalars().all()
+        if not sources:
+            raise HTTPException(status_code=404, detail='No completed sources found in knowledge base')
+        source_titles = {s.id: s.title for s in sources}
+        source_title = 'All Ingested Knowledge Sources'
+        source_type = 'mixed'
 
-    # Load conflicts
-    conflict_result = await db.execute(
-        select(Conflict).where(Conflict.source_id == request.source_id)
-    )
-    conflicts = [_conflict_to_dict(c) for c in conflict_result.scalars().all()]
+        ku_result = await db.execute(
+            select(KnowledgeUnit)
+            .join(Source, KnowledgeUnit.source_id == Source.id)
+            .where(Source.status == 'completed')
+            .order_by(KnowledgeUnit.created_at.asc())
+            .limit(5000)
+        )
+        units = ku_result.scalars().all()
 
-    # Resolve or create conversation session for this source
-    conv = None
-    conv_id = request.conversation_id
-    if request.save_history:
-        try:
-            if conv_id:
-                c_res = await db.execute(
-                    select(ChatConversation).where(ChatConversation.id == conv_id)
-                )
-                conv = c_res.scalar_one_or_none()
-                if conv and conv.source_id != request.source_id:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f'Conversation {conv_id} does not belong to source {request.source_id}',
+        conflict_result = await db.execute(
+            select(Conflict)
+            .join(Source, Conflict.source_id == Source.id)
+            .where(Source.status == 'completed')
+        )
+        conflicts = [_conflict_to_dict(c) for c in conflict_result.scalars().all()]
+        conv = None
+        conv_id = None
+    else:
+        # Verify source exists and is completed
+        result = await db.execute(select(Source).where(Source.id == request.source_id))
+        source = result.scalar_one_or_none()
+        if not source:
+            raise HTTPException(status_code=404, detail=f'Source {request.source_id} not found')
+        if source.status != 'completed':
+            raise HTTPException(status_code=409, detail=f'Source processing is not complete (status: {source.status})')
+
+        source_titles = {source.id: source.title}
+        source_title = source.title
+        source_type = source.source_type or 'unknown'
+
+        # Load all knowledge units from DB for this source (for VEKG reconstruction)
+        ku_result = await db.execute(
+            select(KnowledgeUnit)
+            .where(KnowledgeUnit.source_id == request.source_id)
+            .order_by(KnowledgeUnit.created_at.asc())
+            .limit(2000)
+        )
+        units = ku_result.scalars().all()
+        if len(units) >= 2000:
+            logger.warning('Source %s exceeded 2000 active knowledge units; retrieved top 2000', request.source_id)
+
+        # Load conflicts
+        conflict_result = await db.execute(
+            select(Conflict).where(Conflict.source_id == request.source_id)
+        )
+        conflicts = [_conflict_to_dict(c) for c in conflict_result.scalars().all()]
+
+        # Resolve or create conversation session for this source
+        conv = None
+        conv_id = request.conversation_id
+        if request.save_history:
+            try:
+                if conv_id:
+                    c_res = await db.execute(
+                        select(ChatConversation).where(ChatConversation.id == conv_id)
                     )
-            if not conv:
-                c_res = await db.execute(
-                    select(ChatConversation)
-                    .where(ChatConversation.source_id == request.source_id)
-                    .order_by(ChatConversation.updated_at.desc())
-                    .limit(1)
-                )
-                conv = c_res.scalar_one_or_none()
-            if not conv:
-                conv = ChatConversation(source_id=request.source_id, title=source.title[:120])
-                db.add(conv)
-                await db.flush()
-            conv_id = conv.id
-        except (StopIteration, HTTPException):
-            raise
-        except Exception as e:
-            logger.warning('Failed resolving conversation session: %s', e)
+                    conv = c_res.scalar_one_or_none()
+                    if conv and conv.source_id != request.source_id:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f'Conversation {conv_id} does not belong to source {request.source_id}',
+                        )
+                if not conv:
+                    c_res = await db.execute(
+                        select(ChatConversation)
+                        .where(ChatConversation.source_id == request.source_id)
+                        .order_by(ChatConversation.updated_at.desc())
+                        .limit(1)
+                    )
+                    conv = c_res.scalar_one_or_none()
+                if not conv:
+                    conv = ChatConversation(source_id=request.source_id, title=source.title[:120])
+                    db.add(conv)
+                    await db.flush()
+                conv_id = conv.id
+            except (StopIteration, HTTPException):
+                raise
+            except Exception as e:
+                logger.warning('Failed resolving conversation session: %s', e)
+
+    units_as_dicts = [_ku_to_dict(u) for u in units]
+    for u_d in units_as_dicts:
+        if u_d.get('source_id') in source_titles:
+            u_d['source_title'] = source_titles[u_d['source_id']]
+    units_by_id = {u['id']: u for u in units_as_dicts}
 
     # Build pipeline components
     from app.database.qdrant import QdrantManager
@@ -148,15 +189,32 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
     provenance = ProvenanceTracker()
     pipeline = RetrievalPipeline(router_obj, retriever, reranker, provenance, settings)
 
+    temporal_filter_dict = None
+    if request.timestamp_filter is not None:
+        temporal_filter_dict = {'target_sec': request.timestamp_filter}
+
     pipeline_result = await pipeline.run(
         query=request.query,
-        source_id=request.source_id,
-        source_type=source.source_type or 'unknown',
+        source_id=None if is_all_sources else request.source_id,
+        source_type=source_type,
         top_k=request.top_k,
         include_conflicts=request.include_conflicts,
         conflicts=conflicts,
         units_by_id=units_by_id,
+        requested_strategy=request.strategy,
+        modality_filter=request.modality,
+        timestamp_filter=temporal_filter_dict,
     )
+
+    # Enrich evidence items with source title and strategy
+    for ev in pipeline_result.get('evidence', []):
+        s_id = ev.get('source_id')
+        if s_id and s_id in source_titles:
+            ev['source_title'] = source_titles[s_id]
+        elif not ev.get('source_title'):
+            ev['source_title'] = source_title
+        if 'strategy_used' not in ev:
+            ev['strategy_used'] = pipeline_result.get('strategy_used')
 
     # Generate answer
     llm = LLMClient(settings)
@@ -166,7 +224,7 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
             query=request.query,
             evidence=pipeline_result['evidence'],
             conflicts=pipeline_result['conflicts'],
-            source_title=source.title,
+            source_title=source_title,
             abstain=pipeline_result.get('abstain', False),
         )
         answer_text = answer_result['answer']
@@ -250,7 +308,7 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
     }
 
     # Persist message turns to the source-specific conversation
-    if request.save_history and conv:
+    if request.save_history and conv and not is_all_sources:
         try:
             from datetime import datetime
             user_msg = ChatMessage(
@@ -285,6 +343,7 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
         'answer': answer_text,
         'query': request.query,
         'source_id': request.source_id,
+        'source_title': source_title,
         'conversation_id': conv_id,
         'evidence': pipeline_result['evidence'] if request.include_evidence else [],
         'conflicts': conflict_responses,
@@ -312,6 +371,18 @@ async def get_or_create_source_conversation(
     """
     if not source_id or not source_id.strip():
         raise HTTPException(status_code=400, detail='source_id is required')
+
+    if source_id.strip().lower() in ('all', 'all_sources', '*'):
+        return {
+            'id': 'conv_all_sources',
+            'source_id': 'all',
+            'source_title': 'Global Knowledge Base',
+            'source_status': 'completed',
+            'title': 'Global Knowledge Base Chat',
+            'created_at': None,
+            'updated_at': None,
+            'messages': [],
+        }
 
     result = await db.execute(select(Source).where(Source.id == source_id))
     source = result.scalar_one_or_none()
@@ -394,6 +465,18 @@ async def create_new_source_conversation(
     if not source_id or not source_id.strip():
         raise HTTPException(status_code=400, detail='source_id is required')
 
+    if source_id.strip().lower() in ('all', 'all_sources', '*'):
+        return {
+            'id': 'conv_all_sources',
+            'source_id': 'all',
+            'source_title': 'Global Knowledge Base',
+            'source_status': 'completed',
+            'title': 'Global Knowledge Base Chat',
+            'created_at': None,
+            'updated_at': None,
+            'messages': [],
+        }
+
     result = await db.execute(select(Source).where(Source.id == source_id))
     source = result.scalar_one_or_none()
     if not source:
@@ -426,6 +509,20 @@ async def get_suggested_questions(
     """
     Context-aware suggested questions based on the source's actual indexed concepts.
     """
+    if not source_id or not source_id.strip():
+        raise HTTPException(status_code=400, detail='source_id is required')
+
+    if source_id.strip().lower() in ('all', 'all_sources', '*'):
+        return {
+            'source_id': 'all',
+            'questions': [
+                'What core concepts are covered across all indexed sources?',
+                'Compare the topics discussed in the uploaded videos, audio, and documents.',
+                'What algorithms or formulas are explained across the sources?',
+                'Summarize the key takeaways and errata from the knowledge base.',
+            ],
+        }
+
     result = await db.execute(select(Source).where(Source.id == source_id))
     source = result.scalar_one_or_none()
     if not source:
@@ -478,6 +575,12 @@ async def list_source_conversations(
     """
     List all conversation sessions belonging to a specific source.
     """
+    if not source_id or not source_id.strip():
+        raise HTTPException(status_code=400, detail='source_id is required')
+
+    if source_id.strip().lower() in ('all', 'all_sources', '*'):
+        return []
+
     result = await db.execute(select(Source).where(Source.id == source_id))
     source = result.scalar_one_or_none()
     if not source:
@@ -519,12 +622,90 @@ async def delete_conversation(conversation_id: str, db: AsyncSession = Depends(g
     await db.commit()
 
 
+def _resolve_source_file(file_path_str: Optional[str]) -> Optional[Path]:
+    """
+    Safely resolve a source file path against known data roots.
+    Ensures that the target is a regular file and prevents directory traversal attacks.
+    """
+    if not file_path_str:
+        return None
+
+    settings = get_settings()
+    allowed_roots = [
+        Path(settings.upload_dir).resolve(),
+        Path(settings.processed_dir).resolve(),
+        Path(settings.frames_dir).resolve(),
+        Path(settings.transcripts_dir).resolve(),
+        (Path(settings.upload_dir).parent / 'samples').resolve(),
+        (Path(__file__).resolve().parents[2] / 'data').resolve(),
+        (Path(__file__).resolve().parents[3] / 'data').resolve(),
+    ]
+
+    raw_path = Path(file_path_str)
+    candidate: Optional[Path] = None
+
+    if raw_path.is_absolute() and raw_path.is_file():
+        candidate = raw_path.resolve()
+    else:
+        candidate_bases = [
+            Path.cwd(),
+            Path.cwd() / 'backend',
+            Path(__file__).resolve().parents[2],
+            Path(__file__).resolve().parents[3],
+        ]
+        for base in candidate_bases:
+            cand = (base / file_path_str).resolve()
+            if cand.is_file():
+                candidate = cand
+                break
+
+    if not candidate:
+        # Fallback search by filename within upload_dir subdirectories
+        filename = raw_path.name
+        upload_root = Path(settings.upload_dir).resolve()
+        matches = list(upload_root.glob(f'*/{filename}'))
+        if matches and matches[0].is_file():
+            candidate = matches[0].resolve()
+
+    if not candidate or not candidate.is_file():
+        return None
+
+    # Traversal guard: must reside within at least one allowed root
+    is_safe = False
+    for root in allowed_roots:
+        try:
+            candidate.relative_to(root)
+            is_safe = True
+            break
+        except ValueError:
+            continue
+
+    return candidate if is_safe else None
+
+
 @router.get('/api/sources')
-async def list_sources(db: AsyncSession = Depends(get_db)):
-    """List all ingested sources, ordered by latest created."""
-    result = await db.execute(
-        select(Source).order_by(Source.created_at.desc()).limit(20)
-    )
+async def list_sources(
+    limit: Optional[int] = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    search: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None),
+    source_type: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all ingested sources, ordered by latest created, with optional filtering and pagination."""
+    stmt = select(Source).order_by(Source.created_at.desc().nullslast())
+    filter_q = search or q
+    if filter_q and filter_q.strip():
+        stmt = stmt.where(Source.title.ilike(f'%{filter_q.strip()}%'))
+    if source_type and source_type.strip() and source_type.lower() != 'all':
+        stmt = stmt.where(Source.source_type == source_type.strip().lower())
+
+    # If limit is not explicitly provided, default to a generous ceiling of 500
+    # to avoid arbitrary truncation while preserving performance.
+    effective_limit = limit if limit is not None else 500
+    stmt = stmt.limit(effective_limit).offset(offset)
+
+    result = await db.execute(stmt)
     sources = result.scalars().all()
     return [
         {
@@ -532,6 +713,11 @@ async def list_sources(db: AsyncSession = Depends(get_db)):
             'title': s.title,
             'source_type': s.source_type,
             'status': s.status,
+            'url': f'/api/source/{s.id}/media' if s.file_path else s.url,
+            'media_url': f'/api/source/{s.id}/media' if s.file_path else s.url,
+            'has_media': bool(s.file_path or s.url),
+            'duration': s.duration,
+            'num_pages': s.num_pages,
             'created_at': s.created_at.isoformat() if s.created_at else None,
         }
         for s in sources
@@ -545,13 +731,17 @@ async def get_source(source_id: str, db: AsyncSession = Depends(get_db)):
     source = result.scalar_one_or_none()
     if not source:
         raise HTTPException(status_code=404, detail=f'Source {source_id} not found')
+
+    media_url = f'/api/source/{source.id}/media' if source.file_path else source.url
     return {
         'id': source.id,
         'title': source.title,
         'source_type': source.source_type,
         'status': source.status,
-        'url': source.url,
-        'file_path': source.file_path,
+        'url': media_url,
+        'media_url': media_url,
+        'has_media': bool(source.file_path or source.url),
+        'file_path': None,  # Do not leak internal server paths
         'duration': source.duration,
         'num_pages': source.num_pages,
         'channel': source.channel,
@@ -559,6 +749,143 @@ async def get_source(source_id: str, db: AsyncSession = Depends(get_db)):
         'metadata': source.metadata_ or {},
         'created_at': source.created_at.isoformat() if source.created_at else None,
     }
+
+
+@router.get('/api/source/{source_id}/media')
+@router.get('/api/sources/{source_id}/media')
+async def get_source_media(source_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    Safely stream source media (audio, video, PDF, PPTX, image) with support for HTTP Range requests.
+    Enables seeking, scrubbing, and smooth media playback in HTML5 audio/video elements.
+    """
+    result = await db.execute(select(Source).where(Source.id == source_id))
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail=f'Source {source_id} not found')
+
+    if source.source_type == 'youtube' and not source.file_path:
+        raise HTTPException(
+            status_code=400,
+            detail='YouTube sources do not have direct media files; use embedded player.',
+        )
+
+    if not source.file_path:
+        raise HTTPException(status_code=404, detail=f'No media file recorded for source {source_id}')
+
+    file_path = _resolve_source_file(source.file_path)
+    if not file_path or not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f'Media file for source {source_id} not found on disk')
+
+    file_size = file_path.stat().st_size
+    mime_type, _ = mimetypes.guess_type(str(file_path))
+    if not mime_type:
+        ext = file_path.suffix.lower()
+        if ext == '.mp3':
+            mime_type = 'audio/mpeg'
+        elif ext == '.wav':
+            mime_type = 'audio/wav'
+        elif ext == '.mp4':
+            mime_type = 'video/mp4'
+        elif ext == '.pdf':
+            mime_type = 'application/pdf'
+        elif ext in ('.ppt', '.pptx'):
+            mime_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        else:
+            mime_type = 'application/octet-stream'
+
+    range_header = request.headers.get('range')
+    if range_header:
+        range_match = re.match(r'bytes=(\d+)-(\d*)', range_header.strip())
+        if not range_match:
+            return Response(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                headers={'Content-Range': f'bytes */{file_size}'},
+            )
+        start = int(range_match.group(1))
+        end = int(range_match.group(2)) if range_match.group(2) else file_size - 1
+
+        if start >= file_size or end >= file_size or start > end:
+            return Response(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                headers={'Content-Range': f'bytes */{file_size}'},
+            )
+        content_length = end - start + 1
+
+        def iter_range():
+            with open(file_path, 'rb') as f:
+                f.seek(start)
+                bytes_left = content_length
+                chunk_size = 64 * 1024
+                while bytes_left > 0:
+                    read_len = min(chunk_size, bytes_left)
+                    data = f.read(read_len)
+                    if not data:
+                        break
+                    bytes_left -= len(data)
+                    yield data
+
+        headers = {
+            'Content-Range': f'bytes {start}-{end}/{file_size}',
+            'Accept-Ranges': 'bytes',
+            'Content-Length': str(content_length),
+            'Content-Type': mime_type,
+            'Cache-Control': 'public, max-age=3600',
+        }
+        return StreamingResponse(
+            iter_range(),
+            status_code=status.HTTP_206_PARTIAL_CONTENT,
+            headers=headers,
+            media_type=mime_type,
+        )
+
+    # Full content streaming
+    def iter_file():
+        with open(file_path, 'rb') as f:
+            chunk_size = 64 * 1024
+            while chunk := f.read(chunk_size):
+                yield chunk
+
+    headers = {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': str(file_size),
+        'Content-Type': mime_type,
+        'Cache-Control': 'public, max-age=3600',
+    }
+    return StreamingResponse(
+        iter_file(),
+        status_code=status.HTTP_200_OK,
+        headers=headers,
+        media_type=mime_type,
+    )
+
+
+@router.head('/api/source/{source_id}/media')
+@router.head('/api/sources/{source_id}/media')
+async def head_source_media(source_id: str, db: AsyncSession = Depends(get_db)):
+    """Check existence, MIME type, and size of source media for player negotiation."""
+    result = await db.execute(select(Source).where(Source.id == source_id))
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail=f'Source {source_id} not found')
+    if not source.file_path:
+        raise HTTPException(status_code=404, detail=f'No media file recorded for source {source_id}')
+
+    file_path = _resolve_source_file(source.file_path)
+    if not file_path or not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f'Media file for source {source_id} not found on disk')
+
+    file_size = file_path.stat().st_size
+    mime_type, _ = mimetypes.guess_type(str(file_path))
+    if not mime_type:
+        mime_type = 'application/octet-stream'
+
+    headers = {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': str(file_size),
+        'Content-Type': mime_type,
+        'Cache-Control': 'public, max-age=3600',
+    }
+    return Response(status_code=status.HTTP_200_OK, headers=headers)
 
 
 @router.delete('/api/source/{source_id}', status_code=status.HTTP_204_NO_CONTENT)

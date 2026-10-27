@@ -51,6 +51,7 @@ class DynamicRouter:
         'divergence', 'curl', r'big.o', 'asymptotic', 'recurrence', 'summation',
     ]
     TIMESTAMP_INDICATORS = [
+        r'\b\d{1,2}:\d{2}(?::\d{2})?\b',
         'when', 'where did', 'at what time', 'which part', 'timestamp',
         'which minute', 'which section', 'mentioned', 'said', 'explain again',
         'what time', 'how far in', 'minute', 'second', 'beginning', 'end of',
@@ -82,7 +83,8 @@ class DynamicRouter:
             '|'.join(self.FORMULA_INDICATORS), re.IGNORECASE
         )
         self._timestamp_re = re.compile(
-            '|'.join(re.escape(p) if ' ' not in p else p for p in self.TIMESTAMP_INDICATORS),
+            r'\b\d{1,2}:\d{2}(?::\d{2})?\b|' +
+            '|'.join(re.escape(p) if ' ' not in p else p for p in self.TIMESTAMP_INDICATORS if not p.startswith(r'\b')),
             re.IGNORECASE,
         )
         self._code_re = re.compile('|'.join(self.CODE_INDICATORS), re.IGNORECASE)
@@ -151,9 +153,16 @@ class DynamicRouter:
     # Public routing
     # ------------------------------------------------------------------
 
-    def route(self, query: str, source_type: str) -> Dict[str, Any]:
+    def route(
+        self,
+        query: str,
+        source_type: str = "video",
+        requested_strategy: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Classify the query and return a routing decision.
+        If requested_strategy is explicitly provided (and not 'auto'), it overrides
+        the automated classifier while maintaining query classification for metadata.
 
         Returns
         -------
@@ -163,9 +172,40 @@ class DynamicRouter:
         - explanation (str) — human-readable rationale
         - top_k_override (int or None)
         - modality_filter (str or None) — e.g. 'formula', 'code'
+        - is_override (bool) — whether manual override was used
         """
         query_type = self.classify_query(query)
-        strategy = self.get_strategy(query_type, source_type)
+        is_override = False
+
+        STRATEGY_ALIAS_MAP = {
+            'semantic': RetrievalStrategy.SEMANTIC_ONLY,
+            'semantic_only': RetrievalStrategy.SEMANTIC_ONLY,
+            'keyword': RetrievalStrategy.LEXICAL_ONLY,
+            'bm25': RetrievalStrategy.LEXICAL_ONLY,
+            'lexical': RetrievalStrategy.LEXICAL_ONLY,
+            'lexical_only': RetrievalStrategy.LEXICAL_ONLY,
+            'graph': RetrievalStrategy.KNOWLEDGE_GRAPH,
+            'vekg': RetrievalStrategy.KNOWLEDGE_GRAPH,
+            'knowledge_graph': RetrievalStrategy.KNOWLEDGE_GRAPH,
+            'timestamp': RetrievalStrategy.TIMESTAMP_AWARE,
+            'timestamp_aware': RetrievalStrategy.TIMESTAMP_AWARE,
+            'temporal': RetrievalStrategy.TIMESTAMP_AWARE,
+            'formula': RetrievalStrategy.FORMULA_PRIORITY,
+            'formula_priority': RetrievalStrategy.FORMULA_PRIORITY,
+            'code': RetrievalStrategy.CODE_PRIORITY,
+            'code_priority': RetrievalStrategy.CODE_PRIORITY,
+            'hybrid': RetrievalStrategy.HYBRID,
+        }
+
+        if requested_strategy and requested_strategy.strip().lower() not in ('auto', 'default', 'none'):
+            clean_req = requested_strategy.strip().lower()
+            if clean_req in STRATEGY_ALIAS_MAP:
+                strategy = STRATEGY_ALIAS_MAP[clean_req]
+                is_override = True
+            else:
+                strategy = self.get_strategy(query_type, source_type)
+        else:
+            strategy = self.get_strategy(query_type, source_type)
 
         explanations = {
             QueryType.FORMULA: 'Query contains formula/complexity indicators → formula-priority retrieval',
@@ -188,12 +228,19 @@ class DynamicRouter:
             QueryType.TIMESTAMP: 10,
         }
 
+        explanation = (
+            f"User selected explicit strategy: {strategy.value.replace('_', ' ').title()}"
+            if is_override
+            else explanations.get(query_type, 'General hybrid retrieval')
+        )
+
         return {
             'query_type': query_type.value,
             'strategy': strategy.value,
-            'explanation': explanations.get(query_type, 'General hybrid retrieval'),
+            'explanation': explanation,
             'top_k_override': top_k_overrides.get(query_type),
             'modality_filter': modality_filters.get(query_type),
+            'is_override': is_override,
         }
 
     # ------------------------------------------------------------------

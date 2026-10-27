@@ -36,8 +36,9 @@ export const uploadFile = (file, onProgress) => {
 
 export const getStatus = (sourceId) => api.get(`/status/${sourceId}`)
 export const retrySource = (sourceId) => api.post(`/sources/${sourceId}/retry`)
-export const getSources = () => api.get('/sources')
+export const getSources = (params = {}) => api.get('/sources', { params })
 export const getSource = (sourceId) => api.get(`/source/${sourceId}`)
+export const getSourceMediaUrl = (sourceId) => `/api/source/${sourceId}/media`
 export const deleteSource = (sourceId) => api.delete(`/source/${sourceId}`)
 export const getKnowledge = (sourceId) => api.get(`/knowledge/${sourceId}`)
 export const getKnowledgeUnitHistory = (kuId) => api.get(`/knowledge/unit/${kuId}/history`)
@@ -54,6 +55,9 @@ export const querySource = (
   includeEvidence = true,
   includeConflicts = true,
   conversationId = null,
+  strategy = null,
+  modality = null,
+  timestampFilter = null,
 ) =>
   api.post('/query', {
     source_id: sourceId,
@@ -62,6 +66,9 @@ export const querySource = (
     include_evidence: includeEvidence,
     include_conflicts: includeConflicts,
     conversation_id: conversationId,
+    strategy: strategy || undefined,
+    modality: modality || undefined,
+    timestamp_filter: timestampFilter !== null ? timestampFilter : undefined,
   })
 
 export const getSourceConversation = (sourceId, conversationId = null) =>

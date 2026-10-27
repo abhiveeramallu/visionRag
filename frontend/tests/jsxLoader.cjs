@@ -4,8 +4,17 @@ const sucrase = require('sucrase');
 
 const cache = {};
 
+function resolveModuleFile(fromDir, modulePath) {
+  const p = path.resolve(fromDir, modulePath);
+  if (fs.existsSync(p) && fs.statSync(p).isFile()) return p;
+  if (fs.existsSync(p + '.jsx')) return p + '.jsx';
+  if (fs.existsSync(p + '.js')) return p + '.js';
+  if (fs.existsSync(p + '.json')) return p + '.json';
+  return p + '.jsx';
+}
+
 function loadJsxComponent(modulePath, fromDir = __dirname) {
-  const resolved = path.resolve(fromDir, modulePath.endsWith('.jsx') ? modulePath : modulePath + '.jsx');
+  const resolved = resolveModuleFile(fromDir, modulePath);
   if (cache[resolved]) {
     return cache[resolved];
   }

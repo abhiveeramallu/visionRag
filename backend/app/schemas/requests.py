@@ -24,9 +24,12 @@ class YouTubeIngestRequest(BaseModel):
 
 
 class QueryRequest(BaseModel):
-    source_id: str = Field(..., description='Source ID to query against')
+    source_id: str = Field(..., description="Source ID to query against, or 'all' for multi-source search")
     query: str = Field(..., min_length=1, max_length=2000, description='User question')
     top_k: int = Field(default=5, ge=1, le=20, description='Number of evidence items to retrieve')
+    strategy: Optional[str] = Field(default=None, description="Optional retrieval strategy override: auto | semantic | keyword | graph | timestamp | hybrid")
+    modality: Optional[str] = Field(default=None, description="Optional modality filter: asr | ocr | code | formula | text | vision")
+    timestamp_filter: Optional[float] = Field(default=None, description="Optional target timestamp in seconds")
     include_evidence: bool = Field(default=True)
     include_conflicts: bool = Field(default=True)
     conversation_id: Optional[str] = Field(default=None, description='Optional conversation session ID')

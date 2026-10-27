@@ -12,6 +12,7 @@ Nodes represent KnowledgeUnits. Edges represent relationships:
 - related_to     : semantic relatedness (not directional in meaning)
 """
 import logging
+import re
 import uuid
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
@@ -335,6 +336,101 @@ class VEKG:
                 deduped.append(u)
 
         return sorted(deduped, key=lambda u: u.confidence, reverse=True)
+
+    def traverse_related_concepts(
+        self,
+        query: str,
+        threshold: float = 0.35,
+        source_id: Optional[str] = None,
+        max_results: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Traverse the VEKG graph starting from seed concept nodes matching the query.
+        Discovers:
+        - Direct concept matches and lineage chains (corrects/supersedes)
+        - Connected conflict nodes (cross-modal disagreements)
+        - Multi-hop related topic nodes (supports/related_to)
+
+        Returns a list of dicts with unit, relevance score, and graph relationship metadata.
+        """
+        seeds = self.search_by_concept(query, threshold=threshold)
+        query_words = set(re.findall(r'\b[a-zA-Z0-9_\^²³]{2,}\b', query.lower()))
+
+        # Also search unit content if seeds from concept labels alone are sparse
+        if len(seeds) < 3:
+            for u in self._unit_index.values():
+                if source_id and u.source_id != source_id:
+                    continue
+                content_lower = u.content.lower()
+                if any(qw in content_lower for qw in query_words if len(qw) > 3):
+                    if u not in seeds:
+                        seeds.append(u)
+
+        candidates_map: Dict[str, Dict[str, Any]] = {}
+
+        for seed in seeds:
+            if source_id and seed.source_id != source_id:
+                continue
+
+            base_score = float(seed.confidence)
+            # Boost active and verified status in graph
+            if seed.status == 'verified':
+                base_score *= 1.10
+            elif seed.status == 'superseded':
+                base_score *= 0.85
+
+            if seed.id not in candidates_map:
+                candidates_map[seed.id] = {
+                    'unit': seed,
+                    'score': base_score,
+                    'is_seed': True,
+                    'relations': [],
+                }
+
+            # Traverse adjacent nodes in VEKG
+            if seed.id in self.graph:
+                # Outgoing edges
+                for _, target_id, edge_data in self.graph.out_edges(seed.id, data=True):
+                    rel = edge_data.get('relation', EDGE_RELATED_TO)
+                    target_unit = self._unit_index.get(target_id)
+                    if target_unit:
+                        if source_id and target_unit.source_id != source_id:
+                            continue
+                        rel_info = f"{rel} -> {target_unit.concept}"
+                        candidates_map[seed.id]['relations'].append(rel_info)
+
+                        if target_id not in candidates_map:
+                            t_score = target_unit.confidence * (
+                                1.05 if rel in (EDGE_CORRECTS, EDGE_SUPERSEDES) else 0.80
+                            )
+                            candidates_map[target_id] = {
+                                'unit': target_unit,
+                                'score': t_score,
+                                'is_seed': False,
+                                'relations': [f"Connected via {rel} from {seed.concept}"],
+                            }
+
+                # Incoming edges
+                for src_id, _, edge_data in self.graph.in_edges(seed.id, data=True):
+                    rel = edge_data.get('relation', EDGE_RELATED_TO)
+                    src_unit = self._unit_index.get(src_id)
+                    if src_unit:
+                        if source_id and src_unit.source_id != source_id:
+                            continue
+                        if src_id not in candidates_map:
+                            s_score = src_unit.confidence * (
+                                1.15 if rel in (EDGE_CORRECTS, EDGE_SUPERSEDES) else 0.80
+                            )
+                            candidates_map[src_id] = {
+                                'unit': src_unit,
+                                'score': s_score,
+                                'is_seed': False,
+                                'relations': [f"Incoming {rel} to {seed.concept}"],
+                            }
+
+        results = list(candidates_map.values())
+        results.sort(key=lambda x: x['score'], reverse=True)
+        return results[:max_results]
 
     def get_neighbours(
         self,

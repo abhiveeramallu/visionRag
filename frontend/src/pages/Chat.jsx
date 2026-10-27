@@ -10,7 +10,7 @@ import ConflictCompare from '../components/ConflictCompare'
 import {
   Send, Loader2, MessageSquare, ChevronDown, ChevronRight,
   Activity, ShieldCheck, History, AlertTriangle, Layers, Plus,
-  RefreshCw, BookOpen, AlertCircle, Sparkles, ExternalLink
+  RefreshCw, BookOpen, AlertCircle, Sparkles, ExternalLink, Route, Globe
 } from 'lucide-react'
 
 function TracePanel({ trace, abstained, latencyMs }) {
@@ -144,8 +144,17 @@ export default function Chat() {
 
   const urlSourceId = routeSourceId || searchParams.get('source_id')
 
+  const GLOBAL_SOURCE = {
+    id: 'all',
+    title: '🌐 Global Knowledge Base (All Sources)',
+    source_type: 'mixed',
+    status: 'completed',
+  }
+
   const [sources, setSources] = useState([])
   const [selectedSource, setSelectedSource] = useState(null)
+  const [selectedStrategy, setSelectedStrategy] = useState('auto')
+  const [selectedModality, setSelectedModality] = useState('all')
   const [conversationId, setConversationId] = useState(null)
   const [messages, setMessages] = useState([])
   const [suggestedQuestions, setSuggestedQuestions] = useState([])
@@ -167,7 +176,11 @@ export default function Chat() {
         // Select source based on URL param or first completed source
         let target = null
         if (urlSourceId) {
-          target = list.find((s) => s.id === urlSourceId)
+          if (urlSourceId === 'all') {
+            target = GLOBAL_SOURCE
+          } else {
+            target = list.find((s) => s.id === urlSourceId)
+          }
         }
         if (!target) {
           target = list.find((s) => s.status === 'completed') || list[0]
@@ -185,10 +198,16 @@ export default function Chat() {
 
   // 2. React to URL changes (when user selects another source or navigates)
   useEffect(() => {
-    if (urlSourceId && sources.length > 0) {
-      const match = sources.find((s) => s.id === urlSourceId)
-      if (match && match.id !== selectedSource?.id) {
-        setSelectedSource(match)
+    if (urlSourceId) {
+      if (urlSourceId === 'all') {
+        if (selectedSource?.id !== 'all') {
+          setSelectedSource(GLOBAL_SOURCE)
+        }
+      } else if (sources.length > 0) {
+        const match = sources.find((s) => s.id === urlSourceId)
+        if (match && match.id !== selectedSource?.id) {
+          setSelectedSource(match)
+        }
       }
     }
   }, [urlSourceId, sources])
@@ -255,8 +274,12 @@ export default function Chat() {
     const newId = e.target.value
     if (!newId || newId === selectedSource?.id) return
     navigate(`/chat?source_id=${newId}`)
-    const target = sources.find((s) => s.id === newId)
-    setSelectedSource(target || null)
+    if (newId === 'all') {
+      setSelectedSource(GLOBAL_SOURCE)
+    } else {
+      const target = sources.find((s) => s.id === newId)
+      setSelectedSource(target || null)
+    }
   }
 
   // Handle "New Chat" action scoped to selected source
@@ -297,7 +320,16 @@ export default function Chat() {
     setLoading(true)
 
     try {
-      const res = await querySource(targetSourceId, text, 5, true, true, targetConvId)
+      const res = await querySource(
+        targetSourceId,
+        text,
+        5,
+        true,
+        true,
+        targetConvId,
+        selectedStrategy === 'auto' ? null : selectedStrategy,
+        selectedModality === 'all' ? null : selectedModality,
+      )
 
       // Guard against race conditions if user switched sources while query was in flight
       if (activeSourceRef.current !== targetSourceId) {
@@ -376,6 +408,9 @@ export default function Chat() {
                 onChange={handleSourceChange}
                 className="mt-1 w-full max-w-md bg-gray-50 border border-gray-200 text-xs text-ink-800 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary-500 font-medium truncate"
               >
+                <option value="all" className="font-semibold text-primary-700">
+                  🌐 All Sources (Global Knowledge Base)
+                </option>
                 {sources.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.title} ({s.id.slice(0, 8)}) &middot; {s.status}
@@ -399,7 +434,7 @@ export default function Chat() {
             <Plus className="w-3.5 h-3.5" />
             <span>New Chat</span>
           </button>
-          {selectedSource && (
+          {selectedSource && selectedSource.id !== 'all' && (
             <Link
               to={`/source/${selectedSource.id}`}
               className="p-1.5 rounded-lg border border-gray-200 text-ink-400 hover:text-ink-700 text-xs"
@@ -525,13 +560,54 @@ export default function Chat() {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Retrieval Strategy & Modality Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs pt-1 flex-shrink-0">
+        <div className="flex items-center gap-1.5">
+          <span className="text-ink-400 font-semibold uppercase text-[10px] tracking-wider flex items-center gap-1">
+            <Route className="w-3 h-3 text-primary-600" />
+            Strategy:
+          </span>
+          <select
+            value={selectedStrategy}
+            onChange={(e) => setSelectedStrategy(e.target.value)}
+            className="bg-white border border-gray-200 text-ink-700 text-xs rounded-lg px-2 py-1 font-medium focus:outline-none focus:ring-1 focus:ring-primary-500 shadow-xs"
+          >
+            <option value="auto">Auto (Adaptive Router)</option>
+            <option value="semantic">Semantic Search (Vector)</option>
+            <option value="keyword">Keyword Search (BM25)</option>
+            <option value="graph">Knowledge Graph (VEKG)</option>
+            <option value="timestamp">Timestamp / Temporal</option>
+            <option value="hybrid">Hybrid (Dense + Lexical + Graph)</option>
+          </select>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <span className="text-ink-400 font-semibold uppercase text-[10px] tracking-wider flex items-center gap-1">
+            <Layers className="w-3 h-3 text-primary-600" />
+            Modality:
+          </span>
+          <select
+            value={selectedModality}
+            onChange={(e) => setSelectedModality(e.target.value)}
+            className="bg-white border border-gray-200 text-ink-700 text-xs rounded-lg px-2 py-1 font-medium focus:outline-none focus:ring-1 focus:ring-primary-500 shadow-xs"
+          >
+            <option value="all">All Modalities</option>
+            <option value="asr">ASR (Audio / Speech)</option>
+            <option value="ocr">OCR (Visual Text)</option>
+            <option value="code">Code &amp; Syntax</option>
+            <option value="formula">Formulas &amp; Math</option>
+            <option value="vision">Vision Scene</option>
+          </select>
+        </div>
+      </div>
+
       {/* Input Box Form */}
       <form
         onSubmit={(e) => {
           e.preventDefault()
           handleSend()
         }}
-        className="relative flex items-center pt-2 flex-shrink-0"
+        className="relative flex items-center pt-1 flex-shrink-0"
       >
         <input
           type="text"
