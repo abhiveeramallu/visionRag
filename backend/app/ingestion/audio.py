@@ -7,8 +7,14 @@ Prepares audio files for downstream ASR processing.
 import asyncio
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
+
+# Ensure standard bin locations (Homebrew / local) are in PATH for ffmpeg and ffprobe
+for extra_path in ("/opt/homebrew/bin", "/usr/local/bin"):
+    if extra_path not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = f"{extra_path}:{os.environ.get('PATH', '')}"
 
 import ffmpeg
 

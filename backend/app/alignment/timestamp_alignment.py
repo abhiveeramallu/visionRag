@@ -34,12 +34,20 @@ class TimestampAligner:
         code_segments: List[dict],
         total_duration: float
     ) -> List[dict]:  # list of AlignedWindow-compatible dicts
+        all_segments = asr_segments + ocr_segments + vision_segments + formula_segments + code_segments
+        max_seg_end = 0.0
+        for seg in all_segments:
+            seg_end = float(seg.get('timestamp_end') or seg.get('end') or seg.get('timestamp_start') or seg.get('start') or 0.0)
+            if seg_end > max_seg_end:
+                max_seg_end = seg_end
+
+        effective_duration = max(float(total_duration or 0.0), max_seg_end)
         windows = {}
-        num_windows = max(1, int(total_duration / self.window_size) + 1)
+        num_windows = max(1, int(effective_duration / self.window_size) + 1)
         
         for i in range(num_windows):
             w_start = i * self.window_size
-            w_end = min((i + 1) * self.window_size, total_duration)
+            w_end = min((i + 1) * self.window_size, effective_duration)
             w_id = self._get_window_id(source_id, w_start)
             windows[w_id] = {
                 'window_id': w_id,
@@ -57,12 +65,27 @@ class TimestampAligner:
         
         def assign(segments, key):
             for seg in segments:
-                ts = seg.get('timestamp_start') or seg.get('start') or 0.0
+                ts = float(seg.get('timestamp_start') or seg.get('start') or 0.0)
                 w_idx = int(ts / self.window_size)
                 w_start = w_idx * self.window_size
                 w_id = self._get_window_id(source_id, w_start)
-                if w_id in windows:
-                    windows[w_id][key].append(seg)
+                if w_id not in windows:
+                    # Dynamically create window if timestamp exceeds initial duration
+                    w_end = w_start + self.window_size
+                    windows[w_id] = {
+                        'window_id': w_id,
+                        'source_id': source_id,
+                        'window_start': w_start,
+                        'window_end': w_end,
+                        'page': None,
+                        'slide': None,
+                        'asr_segments': [],
+                        'ocr_segments': [],
+                        'vision_segments': [],
+                        'formula_segments': [],
+                        'code_segments': []
+                    }
+                windows[w_id][key].append(seg)
         
         assign(asr_segments, 'asr_segments')
         assign(ocr_segments, 'ocr_segments')

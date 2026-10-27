@@ -40,7 +40,7 @@ def _detect_source_type(filename: str) -> str:
 async def _update_job(db: AsyncSession, job_id: str, **kwargs) -> None:
     """Update a ProcessingJob record in the database."""
     result = await db.execute(select(ProcessingJob).where(ProcessingJob.id == job_id))
-    job = result.scalar_one_or_none()
+    job = result.scalars().first()
     if job:
         for k, v in kwargs.items():
             setattr(job, k, v)
@@ -77,6 +77,18 @@ async def run_ingestion_pipeline(
     settings = get_settings()
 
     async with AsyncSessionLocal() as db:
+        modality_status = {
+            "audio_extraction": "skipped",
+            "asr": "skipped",
+            "frame_extraction": "skipped",
+            "ocr": "skipped",
+            "visual_analysis": "skipped",
+            "alignment": "pending",
+            "knowledge_units": "pending",
+            "persistence": "pending",
+            "indexing": "pending",
+        }
+
         try:
             logger.info('Starting ingestion pipeline for source %s (type=%s)', source_id, source_type)
             # --- Step 1: Download / prepare ---
@@ -103,6 +115,11 @@ async def run_ingestion_pipeline(
                 source_type = 'video' if file_path and Path(file_path).suffix in ('.mp4', '.mkv', '.webm') else 'audio'
                 await _update_job(db, job_id, current_step='Media ready, preparing extraction', progress=0.12)
 
+            if file_path and not Path(file_path).exists():
+                candidate = Path(settings.upload_dir).resolve().parent / file_path
+                if candidate.exists():
+                    file_path = str(candidate)
+
             if not file_path or not Path(file_path).exists():
                 raise FileNotFoundError(f'Source file not found: {file_path}')
 
@@ -117,10 +134,40 @@ async def run_ingestion_pipeline(
                 vi = VideoIngester()
                 frames_dir = Path(settings.frames_dir) / source_id
                 frames_dir.mkdir(parents=True, exist_ok=True)
-                audio_path = await vi.extract_audio(Path(file_path), frames_dir)
-                frames = await vi.extract_frames(Path(file_path), frames_dir, interval_seconds=settings.frame_interval)
+                
+                try:
+                    audio_path = await vi.extract_audio(Path(file_path), frames_dir)
+                    modality_status["audio_extraction"] = "completed"
+                except Exception as e:
+                    logger.warning("Audio extraction failed for source %s: %s", source_id, e)
+                    audio_path = None
+                    modality_status["audio_extraction"] = "failed"
+                    modality_status["audio_error"] = str(e)
+
+                try:
+                    frames = await vi.extract_frames(Path(file_path), frames_dir, interval_seconds=settings.frame_interval)
+                    modality_status["frame_extraction"] = "completed" if frames else "empty"
+                    modality_status["frame_count"] = len(frames)
+                except Exception as e:
+                    logger.error("Frame extraction failed for source %s: %s", source_id, e)
+                    frames = []
+                    modality_status["frame_extraction"] = "failed"
+                    modality_status["frame_error"] = str(e)
+
                 meta = vi.get_video_metadata(Path(file_path))
                 total_duration = meta.get('duration', 0.0)
+
+                # Persist duration and initial modality metadata to Source model
+                res = await db.execute(select(Source).where(Source.id == source_id))
+                src_obj = res.scalar_one_or_none()
+                if src_obj and total_duration:
+                    src_obj.duration = round(float(total_duration), 2)
+                    src_obj.metadata_ = {
+                        **(src_obj.metadata_ or {}),
+                        "modality_status": modality_status,
+                    }
+                    await db.commit()
+
             elif source_type == 'audio':
                 await _update_job(db, job_id, current_step='Preparing audio', progress=0.15)
                 from app.ingestion.audio import AudioIngester
@@ -130,6 +177,18 @@ async def run_ingestion_pipeline(
                 audio_path = await ai.prepare_audio(Path(file_path), audio_out)
                 meta = ai.get_audio_metadata(audio_path)
                 total_duration = meta.get('duration', 0.0)
+                modality_status["audio_extraction"] = "completed"
+
+                # Persist duration and metadata to Source model
+                res = await db.execute(select(Source).where(Source.id == source_id))
+                src_obj = res.scalar_one_or_none()
+                if src_obj and total_duration:
+                    src_obj.duration = round(float(total_duration), 2)
+                    src_obj.metadata_ = {
+                        **(src_obj.metadata_ or {}),
+                        "modality_status": modality_status,
+                    }
+                    await db.commit()
 
             # --- Step 3: ASR ---
             asr_segments = []
@@ -143,6 +202,8 @@ async def run_ingestion_pipeline(
                     from app.extraction.code_parser import CodeParser
                     asr = ASRExtractor(settings)
                     asr_segments = await asr.transcribe(audio_path, source_id)
+                    modality_status["asr"] = "completed" if asr_segments else "empty"
+                    modality_status["asr_segments_count"] = len(asr_segments)
 
                     formula_extractor = FormulaExtractor()
                     code_parser = CodeParser()
@@ -164,7 +225,21 @@ async def run_ingestion_pipeline(
                                 'language': block['language'],
                             })
                 except Exception as e:
-                    logger.warning('ASR failed (not fatal): %s', e)
+                    logger.error('ASR failed for source %s: %s', source_id, e, exc_info=True)
+                    modality_status["asr"] = "failed"
+                    modality_status["asr_error"] = str(e)
+                    if source_type == 'audio':
+                        raise ValueError(f'Audio speech recognition failed: {e}')
+                    logger.warning('ASR failed (not fatal if visual evidence succeeds): %s', e)
+
+                if source_type == 'audio' and not asr_segments:
+                    modality_status["asr"] = "empty"
+                    raise ValueError(
+                        'Audio speech recognition produced zero transcript segments. '
+                        'Please verify the audio file contains clear, audible speech.'
+                    )
+            elif source_type in ('video', 'youtube') and not audio_path:
+                modality_status["asr"] = "skipped"
 
             # --- Step 4: OCR & Vision ---
             ocr_segments = []
@@ -189,12 +264,18 @@ async def run_ingestion_pipeline(
                             ),
                             timeout=settings.ocr_timeout_seconds,
                         )
+                        modality_status["ocr"] = "completed" if ocr_segments else "empty"
+                        modality_status["ocr_segments_count"] = len(ocr_segments)
                     elif source_type in ('pdf', 'ppt', 'image'):
                         pass
                 except asyncio.TimeoutError:
+                    modality_status["ocr"] = "timed_out"
+                    modality_status["ocr_error"] = f"OCR timed out after {settings.ocr_timeout_seconds}s"
                     logger.warning('OCR stage timed out after %ds; continuing with collected segments', settings.ocr_timeout_seconds)
                 except Exception as e:
-                    logger.warning('OCR failed (not fatal): %s', e)
+                    modality_status["ocr"] = "failed"
+                    modality_status["ocr_error"] = str(e)
+                    logger.warning('OCR failed (not fatal if audio evidence succeeds): %s', e)
 
                 # Vision model extraction for keyframes (if configured)
                 if frames and getattr(settings, 'vision_model', None):
@@ -204,8 +285,32 @@ async def run_ingestion_pipeline(
                         ve = VisionExtractor(settings)
                         sampled_frames = frames[::max(1, len(frames) // 10)] if len(frames) > 10 else frames
                         vision_segments = await ve.describe_frames(sampled_frames, source_id)
+                        modality_status["visual_analysis"] = "completed" if vision_segments else "empty"
                     except Exception as e:
+                        modality_status["visual_analysis"] = "failed"
+                        modality_status["visual_error"] = str(e)
                         logger.warning('Vision extraction failed (not fatal): %s', e)
+                elif frames:
+                    modality_status["visual_analysis"] = "skipped"
+
+            # Multi-modal enforcement for video/youtube: check for fatal failure conditions
+            if source_type in ('video', 'youtube'):
+                asr_failed = modality_status.get("asr") == "failed"
+                ocr_failed = modality_status.get("ocr") in ("failed", "timed_out")
+                if not asr_segments and not ocr_segments:
+                    if asr_failed and ocr_failed:
+                        raise ValueError(
+                            f"Video ingestion failed on all modalities: ASR error ({modality_status.get('asr_error')}); "
+                            f"OCR error ({modality_status.get('ocr_error')})."
+                        )
+                    elif asr_failed:
+                        raise ValueError(
+                            f"Speech recognition (ASR) failed ({modality_status.get('asr_error')}) and visual text extraction (OCR) produced 0 readable text items."
+                        )
+                    elif ocr_failed:
+                        raise ValueError(
+                            f"Visual text extraction (OCR) failed ({modality_status.get('ocr_error')}) and speech recognition (ASR) produced 0 transcript segments."
+                        )
 
             # Handle PDF/PPT/Image text extraction
             formula_segments = []
@@ -415,6 +520,7 @@ async def run_ingestion_pipeline(
                     formula_segments=formula_segments,
                     code_segments=code_segments,
                 )
+            modality_status["alignment"] = "completed"
 
             # --- Step 6: Create knowledge units ---
             await _update_job(db, job_id, current_step='Creating knowledge units', progress=0.75)
@@ -440,113 +546,146 @@ async def run_ingestion_pipeline(
             ku_dicts = []
             evidence_rows = []
             concept_registry = []  # ordered list of {'keywords', 'ku', 'concept'} seen so far, for correction linking
+
             for window in windows:
-                all_segs = (
-                    window.get('asr_segments', [])
-                    + window.get('ocr_segments', [])
-                    + window.get('vision_segments', [])
-                    + window.get('formula_segments', [])
-                    + window.get('code_segments', [])
-                )
-                combined_text = ' '.join(s.get('text', '') for s in all_segs).strip()
-                if not combined_text:
-                    continue
+                window_start = window.get('window_start')
+                window_end = window.get('window_end')
+                page = window.get('page')
+                slide = window.get('slide')
 
-                # Derive concept from first sentence or first 60 chars
-                first_sentence = combined_text.split('.')[0][:80].strip()
-                concept = first_sentence if first_sentence else combined_text[:60]
+                def _register_unit(modality: str, segs: list, custom_concept: str = None):
+                    nonlocal ku_dicts, evidence_rows, concept_registry
+                    combined_text = ' '.join((s.get('text', '') or '').strip() for s in segs).strip()
+                    if not combined_text:
+                        return None
 
-                ku_id = str(uuid.uuid4())
-                conf = scorer.score_segment(
-                    all_segs[0] if all_segs else {'confidence': 0.5, 'modality': 'text', 'text': ''},
-                    window,
-                    all_conflicts,
-                )
-                primary_modality = (
-                    window.get('code_segments')
-                    or window.get('formula_segments')
-                    or window.get('vision_segments')
-                    or window.get('ocr_segments')
-                    or window.get('asr_segments')
-                    or [{}]
-                )[0].get('modality', 'text')
+                    first_sentence = combined_text.split('.')[0][:80].strip()
+                    concept = custom_concept or (first_sentence if first_sentence else combined_text[:60])
 
-                # --- Correction / version-chain detection (VKEG) ---
-                # Only treat this as a correction of an earlier unit when BOTH
-                # explicit correction language is present AND it topically
-                # overlaps a recently-seen concept for this source — either
-                # signal alone is too weak and would mislink unrelated content.
-                previous_version_id = None
-                ku_version = 1
-                ku_status = 'active'
-                correction_reason = None
-                new_keywords = content_keywords(combined_text)
+                    ku_id = str(uuid.uuid4())
+                    conf = scorer.score_segment(
+                        segs[0] if segs else {'confidence': 0.5, 'modality': modality, 'text': ''},
+                        window,
+                        all_conflicts,
+                    )
 
-                correction_phrase = detect_correction_phrase(combined_text)
-                if correction_phrase and concept_registry:
-                    best_entry, best_overlap = None, 0.0
-                    for entry in reversed(concept_registry):
-                        overlap = keyword_overlap(new_keywords, entry['keywords'])
-                        if overlap > best_overlap:
-                            best_overlap, best_entry = overlap, entry
-                    if best_entry and best_overlap >= 0.15:
-                        previous_version_id = best_entry['ku'].id
-                        ku_version = best_entry['ku'].version + 1
-                        ku_status = 'verified'
-                        correction_reason = (
-                            f'Detected correction language ("{correction_phrase}") updating an '
-                            f'earlier statement about "{best_entry["concept"][:60]}".'
-                        )
-                        best_entry['ku'].status = 'superseded'
-                        concept = best_entry['concept']  # keep the concept name stable across versions
+                    previous_version_id = None
+                    ku_version = 1
+                    ku_status = 'active'
+                    correction_reason = None
+                    new_keywords = content_keywords(combined_text)
 
-                ku = KnowledgeUnit(
-                    id=ku_id,
-                    concept=concept,
-                    content=combined_text[:2000],
-                    modality=primary_modality,
-                    source_id=source_id,
-                    timestamp_start=window.get('window_start'),
-                    timestamp_end=window.get('window_end'),
-                    page=window.get('page'),
-                    slide=window.get('slide'),
-                    confidence=conf,
-                    status=ku_status,
-                    version=ku_version,
-                    previous_version_id=previous_version_id,
-                    correction_reason=correction_reason,
-                )
-                db.add(ku)
-                concept_registry.append({'keywords': new_keywords, 'ku': ku, 'concept': concept})
+                    correction_phrase = detect_correction_phrase(combined_text)
+                    if correction_phrase and concept_registry:
+                        best_entry, best_overlap = None, 0.0
+                        for entry in reversed(concept_registry):
+                            overlap = keyword_overlap(new_keywords, entry['keywords'])
+                            if overlap > best_overlap:
+                                best_overlap, best_entry = overlap, entry
+                        if best_entry and best_overlap >= 0.15:
+                            previous_version_id = best_entry['ku'].id
+                            ku_version = best_entry['ku'].version + 1
+                            ku_status = 'verified'
+                            correction_reason = (
+                                f'Detected correction language ("{correction_phrase}") updating an '
+                                f'earlier statement about "{best_entry["concept"][:60]}".'
+                            )
+                            best_entry['ku'].status = 'superseded'
+                            concept = best_entry['concept']
 
-                ku_dicts.append({
-                    'id': ku_id, 'concept': concept,
-                    'content': combined_text[:2000],
-                    'modality': primary_modality,
-                    'source_id': source_id,
-                    'timestamp_start': window.get('window_start'),
-                    'timestamp_end': window.get('window_end'),
-                    'page': window.get('page'),
-                    'slide': window.get('slide'),
-                    'confidence': conf,
-                    'status': ku_status,
-                    'version': ku_version,
-                })
-
-                # --- Evidence rows: one per raw segment supporting this unit ---
-                for seg in all_segs:
-                    evidence_rows.append(Evidence(
-                        id=str(uuid.uuid4()),
-                        knowledge_unit_id=ku_id,
-                        text=(seg.get('text', '') or '')[:2000],
-                        modality=seg.get('modality', primary_modality),
+                    ku = KnowledgeUnit(
+                        id=ku_id,
+                        concept=concept,
+                        content=combined_text[:2000],
+                        modality=modality,
                         source_id=source_id,
-                        timestamp_start=seg.get('timestamp_start') if seg.get('timestamp_start') is not None else seg.get('start'),
-                        timestamp_end=seg.get('timestamp_end') if seg.get('timestamp_end') is not None else seg.get('end'),
-                        page=window.get('page'),
-                        extraction_confidence=seg.get('confidence', conf),
-                    ))
+                        timestamp_start=window_start,
+                        timestamp_end=window_end,
+                        page=page,
+                        slide=slide,
+                        confidence=conf,
+                        status=ku_status,
+                        version=ku_version,
+                        previous_version_id=previous_version_id,
+                        correction_reason=correction_reason,
+                    )
+                    db.add(ku)
+                    concept_registry.append({'keywords': new_keywords, 'ku': ku, 'concept': concept})
 
+                    ku_dicts.append({
+                        'id': ku_id,
+                        'concept': concept,
+                        'content': combined_text[:2000],
+                        'modality': modality,
+                        'source_id': source_id,
+                        'timestamp_start': window_start,
+                        'timestamp_end': window_end,
+                        'page': page,
+                        'slide': slide,
+                        'confidence': conf,
+                        'status': ku_status,
+                        'version': ku_version,
+                    })
+
+                    for seg in segs:
+                        evidence_rows.append(Evidence(
+                            id=str(uuid.uuid4()),
+                            knowledge_unit_id=ku_id,
+                            text=(seg.get('text', '') or '')[:2000],
+                            modality=seg.get('modality', modality),
+                            source_id=source_id,
+                            timestamp_start=seg.get('timestamp_start') if seg.get('timestamp_start') is not None else seg.get('start', window_start),
+                            timestamp_end=seg.get('timestamp_end') if seg.get('timestamp_end') is not None else seg.get('end', window_end),
+                            page=page,
+                            extraction_confidence=seg.get('confidence', conf),
+                        ))
+                    return ku_id
+
+                is_av = source_type in ('video', 'youtube', 'audio')
+                asr_s = window.get('asr_segments', [])
+                ocr_s = window.get('ocr_segments', [])
+                vis_s = window.get('vision_segments', [])
+                form_s = window.get('formula_segments', [])
+                code_s = window.get('code_segments', [])
+
+                # 1. ASR text (or page text for documents)
+                if asr_s:
+                    speech_mod = 'asr' if is_av else ('ocr' if source_type in ('image', 'ppt') else 'text')
+                    _register_unit(speech_mod, asr_s)
+
+                # 2. OCR text (from slides/frames)
+                if ocr_s:
+                    _register_unit('ocr', ocr_s)
+
+                # 3. Vision descriptions
+                if vis_s:
+                    _register_unit('vision', vis_s)
+
+                # 4. Extracted formulas
+                if form_s:
+                    for f in form_s:
+                        _register_unit('formula', [f], custom_concept=f"Formula: {f.get('text', '')[:50]}")
+
+                # 5. Extracted code blocks
+                if code_s:
+                    for c in code_s:
+                        _register_unit('code', [c], custom_concept=f"Code: {c.get('language', 'snippet')}")
+
+            # Verify at least one knowledge unit was extracted
+            if source_type == 'audio' and len(ku_dicts) == 0:
+                raise ValueError(
+                    'No knowledge units could be extracted from this audio source. '
+                    'Please verify the audio file contains clear, audible speech.'
+                )
+            if source_type in ('video', 'youtube') and len(ku_dicts) == 0:
+                # If both modalities are empty but did not raise an unexpected failure, fail with diagnostic
+                if modality_status.get("asr") == "empty" and modality_status.get("ocr") == "empty":
+                    raise ValueError(
+                        'Neither speech (ASR) nor readable text on frames (OCR) could be extracted from this video. '
+                        'Please verify the video contains audible speech or readable frames.'
+                    )
+
+            modality_status["knowledge_units"] = "completed"
             for ev in evidence_rows:
                 db.add(ev)
 
@@ -567,6 +706,7 @@ async def run_ingestion_pipeline(
                     resolution=c.get('resolution'),
                 ))
             await db.commit()
+            modality_status["persistence"] = "completed"
 
             # --- Step 7: Index ---
             await _update_job(db, job_id, current_step='Indexing knowledge units', progress=0.88)
@@ -576,15 +716,31 @@ async def run_ingestion_pipeline(
                 qdrant = QdrantManager(settings)
                 vi_index = VectorIndex(settings, qdrant)
                 await vi_index.index_units(ku_dicts)
+                modality_status["indexing"] = "completed"
             except Exception as e:
+                modality_status["indexing"] = "warning"
+                modality_status["indexing_warning"] = str(e)
                 logger.warning('Vector indexing failed (not fatal): %s', e)
 
             # --- Step 8: Complete ---
-            # Update source status
+            ku_counts_by_modality = {}
+            for k in ku_dicts:
+                m = k.get('modality', 'unknown')
+                ku_counts_by_modality[m] = ku_counts_by_modality.get(m, 0) + 1
+
             result = await db.execute(select(Source).where(Source.id == source_id))
             src = result.scalar_one_or_none()
             if src:
                 src.status = 'completed'
+                src.metadata_ = {
+                    **(src.metadata_ or {}),
+                    'modality_status': modality_status,
+                    'summary': {
+                        'total_kus': len(ku_dicts),
+                        'by_modality': ku_counts_by_modality,
+                        'duration': src.duration,
+                    }
+                }
                 await db.commit()
 
             await _update_job(
@@ -593,7 +749,7 @@ async def run_ingestion_pipeline(
                 current_step='Done',
                 progress=1.0,
             )
-            logger.info('Ingestion complete for source %s', source_id)
+            logger.info('Ingestion complete for source %s (%d KUs created: %s)', source_id, len(ku_dicts), ku_counts_by_modality)
 
         except asyncio.TimeoutError as te:
             logger.error('Ingestion stage timed out for source %s: %s', source_id, te, exc_info=True)
@@ -612,6 +768,11 @@ async def run_ingestion_pipeline(
                 src = result.scalar_one_or_none()
                 if src:
                     src.status = 'failed'
+                    src.metadata_ = {
+                        **(src.metadata_ or {}),
+                        'modality_status': modality_status,
+                        'timeout_reason': str(te)[:500],
+                    }
                     await db.commit()
             except Exception as update_err:
                 logger.error('Failed to update job status to timed_out: %s', update_err)
@@ -632,6 +793,11 @@ async def run_ingestion_pipeline(
                 src = result.scalar_one_or_none()
                 if src:
                     src.status = 'failed'
+                    src.metadata_ = {
+                        **(src.metadata_ or {}),
+                        'modality_status': modality_status,
+                        'failure_reason': str(e)[:500],
+                    }
                     await db.commit()
             except Exception as update_err:
                 logger.error('Failed to update job status to failed: %s', update_err)
@@ -755,6 +921,7 @@ async def get_status(source_id: str, db: AsyncSession = Depends(get_db)):
         select(ProcessingJob)
         .where(ProcessingJob.source_id == source_id)
         .order_by(ProcessingJob.created_at.desc())
+        .limit(1)
     )
     job = result.scalar_one_or_none()
     if not job:
@@ -765,6 +932,12 @@ async def get_status(source_id: str, db: AsyncSession = Depends(get_db)):
     elapsed_seconds = (now - (job.created_at or now)).total_seconds()
     last_heartbeat_seconds_ago = (now - last_updated).total_seconds()
     is_stalled = bool(job.status == 'processing' and last_heartbeat_seconds_ago > 90)
+
+    src_res = await db.execute(select(Source).where(Source.id == source_id))
+    source = src_res.scalar_one_or_none()
+    meta = (source.metadata_ or {}) if source else {}
+    modality_status = meta.get('modality_status') or {}
+    modalities_summary = meta.get('summary') or {}
 
     return {
         'job_id': job.id,
@@ -778,6 +951,8 @@ async def get_status(source_id: str, db: AsyncSession = Depends(get_db)):
         'elapsed_seconds': round(elapsed_seconds, 1),
         'last_heartbeat_seconds_ago': round(last_heartbeat_seconds_ago, 1),
         'is_stalled': is_stalled,
+        'modality_status': modality_status,
+        'modalities_summary': modalities_summary,
     }
 
 

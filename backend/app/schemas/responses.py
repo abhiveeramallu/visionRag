@@ -49,6 +49,8 @@ class JobStatusResponse(BaseModel):
     error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    modality_status: Optional[Dict[str, Any]] = None
+    modalities_summary: Optional[Dict[str, Any]] = None
 
 
 class EvidenceItem(BaseModel):

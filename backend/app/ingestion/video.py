@@ -6,8 +6,15 @@ Handles audio extraction and frame sampling from video files.
 
 import asyncio
 import logging
+import os
+import subprocess
 from pathlib import Path
 from typing import List, Optional
+
+# Ensure standard bin locations (Homebrew / local) are in PATH for ffmpeg and ffprobe
+for extra_path in ("/opt/homebrew/bin", "/usr/local/bin"):
+    if extra_path not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = f"{extra_path}:{os.environ.get('PATH', '')}"
 
 import cv2
 import ffmpeg

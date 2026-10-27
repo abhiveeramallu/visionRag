@@ -145,17 +145,39 @@ class HybridIndex:
         units_by_id = units_by_id or {}
 
         if strategy == 'semantic':
-            results = await self.vector_index.search(query, source_id, top_k)
+            try:
+                results = await self.vector_index.search(query, source_id, top_k)
+            except Exception as e:
+                logger.warning('Semantic search failed, falling back to lexical: %s', e)
+                results = []
+
+            if results:
+                return [
+                    {
+                        'unit_id': r['unit_id'],
+                        'final_score': r['score'],
+                        'semantic_score': r['score'],
+                        'lexical_score': 0.0,
+                        'knowledge_confidence': units_by_id.get(r['unit_id'], {}).get('confidence', 0.5),
+                        'payload': r.get('payload', {}),
+                    }
+                    for r in results
+                ]
+
+            # Fallback to lexical BM25 search if semantic returns nothing
+            logger.info('Semantic search produced 0 results; falling back to lexical BM25 search')
+            lex_results = self.lexical_index.search(query, source_id, top_k)
+            norm_scores = self._normalize_scores([r['score'] for r in lex_results])
             return [
                 {
                     'unit_id': r['unit_id'],
-                    'final_score': r['score'],
-                    'semantic_score': r['score'],
-                    'lexical_score': 0.0,
+                    'final_score': norm_scores[i],
+                    'semantic_score': 0.0,
+                    'lexical_score': norm_scores[i],
                     'knowledge_confidence': units_by_id.get(r['unit_id'], {}).get('confidence', 0.5),
-                    'payload': r.get('payload', {}),
+                    'payload': {'from_fallback': True},
                 }
-                for r in results
+                for i, r in enumerate(lex_results)
             ]
 
         if strategy == 'lexical':
