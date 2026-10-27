@@ -407,7 +407,9 @@ class RetrievalPipeline:
         GENERIC_QUERY_TERMS = {
             'what', 'which', 'where', 'when', 'show', 'explain', 'tell', 'how',
             'time', 'complexity', 'algorithm', 'formula', 'data', 'structure', 'state',
-            'value', 'used', 'using', 'calculate', 'function', 'case', 'equation', 'rule'
+            'value', 'used', 'using', 'calculate', 'function', 'case', 'equation', 'rule',
+            'slide', 'slides', 'lecture', 'video', 'course', 'material', 'notes',
+            'document', 'page', 'work', 'stated', 'mentioned', 'according', 'instructor', 'professor'
         }
         q_tokens = re.findall(r'\b[a-zA-Z0-9_\^²³]{2,}\b', query.lower())
         content_tokens = [t for t in q_tokens if t not in STOPWORDS]

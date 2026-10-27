@@ -4,7 +4,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-18-61DAFB.svg)](https://react.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests Passing](https://img.shields.io/badge/tests-108%20passed-brightgreen.svg)](#4-test-suite-and-verification)
+[![Tests Passing](https://img.shields.io/badge/tests-127%20passed-brightgreen.svg)](#4-test-suite-and-verification)
 [![Reproducibility](https://img.shields.io/badge/eval-reproducible-success.svg)](#5-reproducing-benchmark-evaluations)
 
 > **VisionRAG-X is an end-to-end conflict-aware multimodal Retrieval-Augmented Generation framework that unifies spoken narration (ASR), slide text (OCR), visual diagrams, and lecture errata into an authoritative, temporally verified knowledge base.**
@@ -104,7 +104,7 @@ The application is streamlined into exactly five research-focused sections:
 
 ## 4. Test Suite and Verification
 
-The repository contains **108 passing automated tests** verifying unit, integration, and algorithmic correctness:
+The repository contains **125 sandboxed + 2 live automated tests (127 total)** verifying unit, integration, and algorithmic correctness:
 
 ```bash
 cd backend
@@ -113,19 +113,24 @@ cd backend
 
 Expected output:
 ```
-======================== 108 passed, 1 warning in ~8.4s =========================
+======================== 125 passed, 2 skipped in ~8.0s ========================
 ```
+
+*(Note: The 2 live smoke tests in `tests/test_ollama_live.py` test native loopback against the local Ollama server and pass when Ollama is running).*
 
 Test breakdown:
 - `tests/test_api.py` (12 tests): Uploads, YouTube URL validation, status, knowledge-graph, knowledge-units, evaluation artifacts.
-- `tests/test_confidence.py` (9 tests): Multi-modal confidence calibration, recurrence scoring.
-- `tests/test_conflict_detector.py` (23 tests): Commutativity, algebraic rearrangements, relative numerical errors, LLM fallbacks, candidate preservation.
+- `tests/test_confidence.py` (11 tests): Multi-modal confidence calibration, recurrence scoring, evidence sufficiency boundary conditions.
+- `tests/test_conflict_detector.py` (22 tests): Commutativity, algebraic rearrangements, relative numerical errors, LLM fallbacks, candidate preservation.
 - `tests/test_conflict_filtering.py` (9 tests): Distant corrections, short formula symbols, topic boundaries.
-- `tests/test_evaluation_metrics.py` (18 tests): Normalized nDCG@K, MRR, Token F1, Gold citation F1, Abstention metrics.
+- `tests/test_e2e_scenarios.py` (8 tests): Complete user-facing scenarios including factual QA, slide evidence citations, formula routing, erratum lineage resolution, unanswerable abstention, source isolation, LLM offline fallback, and citation sanitization.
+- `tests/test_evaluation_metrics.py` (17 tests): Normalized nDCG@K, MRR, Token F1, Gold citation F1, Abstention metrics.
+- `tests/test_ollama.py` (8 tests): Native Ollama HTTP completions, request payload formatting, error handling (unreachable, model 404, timeouts), health checks, and citation validation.
+- `tests/test_ollama_live.py` (2 live tests): Real connectivity and grounded generation against local `llama3.2:3b`.
 - `tests/test_query_integration.py` (3 tests): API query path, subject-aware abstention, topical conflict suppression.
 - `tests/test_source_chat_isolation.py` (9 tests): Source query scoping, zero cross-source candidate leakage, VEKG boundary checks, conversation isolation, persistence across reloads.
 - `tests/test_vekg.py` (13 tests): Graph reconstruction, lineage walks, active/disputed/superseded state updates.
-- `tests/test_vision.py` (6 tests): Multi-provider VLM fallbacks and health checks.
+- `tests/test_vision.py` (7 tests): Multi-provider VLM fallbacks and health checks.
 - `tests/test_youtube.py` (6 tests): URL validation, format selector resilience, duration guard, error classification.
 
 ---
@@ -162,19 +167,33 @@ backend/.venv/bin/python evaluation/run_ablations.py
 ### Step 1: Install Dependencies & Verify DB
 ```bash
 # macOS Prerequisites
-brew install postgresql@16 tesseract ffmpeg
+brew install postgresql@16 tesseract ffmpeg ollama
 brew services start postgresql@16
 createdb visionrag_x 2>/dev/null || true
+
+# Start Ollama and pull lightweight local LLM
+ollama serve &
+ollama pull llama3.2:3b
 ```
 
-### Step 2: Start Backend
+### Step 2: Configure Environment
+Copy `.env.example` to `.env` (defaults to native Ollama provider):
+```bash
+cp .env.example .env
+# Verified defaults:
+# LLM_PROVIDER=ollama
+# OLLAMA_BASE_URL=http://localhost:11434
+# OLLAMA_MODEL=llama3.2:3b
+```
+
+### Step 3: Start Backend
 ```bash
 cd backend
 source .venv/bin/activate
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### Step 3: Start Frontend
+### Step 4: Start Frontend
 ```bash
 cd frontend
 npm run dev

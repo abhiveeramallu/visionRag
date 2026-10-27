@@ -83,24 +83,25 @@ async def run_ingestion_pipeline(
             await _update_job(db, job_id, status='processing', current_step='Downloading', progress=0.05)
 
             if source_type == 'youtube' and youtube_url:
-                from app.ingestion.youtube import YouTubeIngester
-                ingester = YouTubeIngester()
-                output_dir = Path(settings.upload_dir) / source_id
-                output_dir.mkdir(parents=True, exist_ok=True)
-                dl = await ingester.download(youtube_url, output_dir)
-                file_path = dl.get('file_path') or dl.get('audio_path')
-                # Update source metadata
-                result = await db.execute(select(Source).where(Source.id == source_id))
-                src = result.scalar_one_or_none()
-                if src and dl.get('metadata'):
-                    meta = dl['metadata']
-                    src.title = meta.get('title', src.title)
-                    src.duration = meta.get('duration')
-                    src.channel = meta.get('channel')
-                    src.upload_date = meta.get('upload_date')
-                    await db.commit()
+                if not file_path or not Path(file_path).exists():
+                    from app.ingestion.youtube import YouTubeIngester
+                    ingester = YouTubeIngester()
+                    output_dir = Path(settings.upload_dir) / source_id
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    dl = await ingester.download(youtube_url, output_dir)
+                    file_path = dl.get('file_path') or dl.get('audio_path')
+                    # Update source metadata
+                    result = await db.execute(select(Source).where(Source.id == source_id))
+                    src = result.scalar_one_or_none()
+                    if src and dl.get('metadata'):
+                        meta = dl['metadata']
+                        src.title = meta.get('title', src.title)
+                        src.duration = meta.get('duration')
+                        src.channel = meta.get('channel')
+                        src.upload_date = meta.get('upload_date')
+                        await db.commit()
                 source_type = 'video' if file_path and Path(file_path).suffix in ('.mp4', '.mkv', '.webm') else 'audio'
-                await _update_job(db, job_id, current_step='Media downloaded, preparing extraction', progress=0.12)
+                await _update_job(db, job_id, current_step='Media ready, preparing extraction', progress=0.12)
 
             if not file_path or not Path(file_path).exists():
                 raise FileNotFoundError(f'Source file not found: {file_path}')
@@ -117,7 +118,7 @@ async def run_ingestion_pipeline(
                 frames_dir = Path(settings.frames_dir) / source_id
                 frames_dir.mkdir(parents=True, exist_ok=True)
                 audio_path = await vi.extract_audio(Path(file_path), frames_dir)
-                frames = await vi.extract_frames(Path(file_path), frames_dir)
+                frames = await vi.extract_frames(Path(file_path), frames_dir, interval_seconds=settings.frame_interval)
                 meta = vi.get_video_metadata(Path(file_path))
                 total_duration = meta.get('duration', 0.0)
             elif source_type == 'audio':
@@ -169,14 +170,29 @@ async def run_ingestion_pipeline(
             ocr_segments = []
             vision_segments = []
             if frames or source_type in ('pdf', 'ppt', 'image'):
-                await _update_job(db, job_id, current_step='Running OCR', progress=0.50)
+                await _update_job(db, job_id, current_step='Running OCR', progress=0.40)
                 try:
                     from app.extraction.ocr import OCRExtractor
                     ocr_extractor = OCRExtractor(settings)
                     if frames:
-                        ocr_segments = await ocr_extractor.extract_from_frame_list(frames, source_id)
+                        async def _ocr_progress_cb(done: int, total: int):
+                            pct = 0.40 + 0.16 * (done / max(1, total))
+                            await _update_job(
+                                db, job_id,
+                                current_step=f'Running OCR ({done}/{total} frames)',
+                                progress=round(pct, 2),
+                            )
+
+                        ocr_segments = await asyncio.wait_for(
+                            ocr_extractor.extract_from_frame_list(
+                                frames, source_id, progress_callback=_ocr_progress_cb
+                            ),
+                            timeout=settings.ocr_timeout_seconds,
+                        )
                     elif source_type in ('pdf', 'ppt', 'image'):
                         pass
+                except asyncio.TimeoutError:
+                    logger.warning('OCR stage timed out after %ds; continuing with collected segments', settings.ocr_timeout_seconds)
                 except Exception as e:
                     logger.warning('OCR failed (not fatal): %s', e)
 
@@ -579,6 +595,26 @@ async def run_ingestion_pipeline(
             )
             logger.info('Ingestion complete for source %s', source_id)
 
+        except asyncio.TimeoutError as te:
+            logger.error('Ingestion stage timed out for source %s: %s', source_id, te, exc_info=True)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            try:
+                await _update_job(
+                    db, job_id,
+                    status='timed_out',
+                    current_step='Timed Out',
+                    error_message='An ingestion stage timed out while processing. Click Retry to re-run.',
+                )
+                result = await db.execute(select(Source).where(Source.id == source_id))
+                src = result.scalar_one_or_none()
+                if src:
+                    src.status = 'failed'
+                    await db.commit()
+            except Exception as update_err:
+                logger.error('Failed to update job status to timed_out: %s', update_err)
         except Exception as e:
             logger.error('Ingestion failed for source %s: %s', source_id, e, exc_info=True)
             try:
@@ -724,6 +760,12 @@ async def get_status(source_id: str, db: AsyncSession = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail=f'No processing job found for source {source_id}')
 
+    now = datetime.utcnow()
+    last_updated = job.updated_at or job.created_at or now
+    elapsed_seconds = (now - (job.created_at or now)).total_seconds()
+    last_heartbeat_seconds_ago = (now - last_updated).total_seconds()
+    is_stalled = bool(job.status == 'processing' and last_heartbeat_seconds_ago > 90)
+
     return {
         'job_id': job.id,
         'source_id': job.source_id,
@@ -733,4 +775,109 @@ async def get_status(source_id: str, db: AsyncSession = Depends(get_db)):
         'error': job.error_message,
         'created_at': job.created_at.isoformat() if job.created_at else None,
         'updated_at': job.updated_at.isoformat() if job.updated_at else None,
+        'elapsed_seconds': round(elapsed_seconds, 1),
+        'last_heartbeat_seconds_ago': round(last_heartbeat_seconds_ago, 1),
+        'is_stalled': is_stalled,
+    }
+
+
+@router.post('/api/sources/{source_id}/retry', status_code=status.HTTP_202_ACCEPTED)
+@router.post('/api/retry/{source_id}', status_code=status.HTTP_202_ACCEPTED)
+async def retry_source(
+    source_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """Retry an ingestion job for a source that failed, timed out, or stalled."""
+    from app.knowledge.models import Conflict, Evidence, KnowledgeUnit
+    from sqlalchemy import delete
+
+    src_res = await db.execute(select(Source).where(Source.id == source_id))
+    source = src_res.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail=f"Source {source_id} not found")
+
+    # Check if a job is actively running with recent heartbeat
+    job_res = await db.execute(
+        select(ProcessingJob)
+        .where(ProcessingJob.source_id == source_id)
+        .order_by(ProcessingJob.updated_at.desc())
+    )
+    latest_job = job_res.scalars().first()
+    if latest_job and latest_job.status == 'processing':
+        heartbeat_ago = (datetime.utcnow() - (latest_job.updated_at or datetime.utcnow())).total_seconds()
+        if heartbeat_ago < 60:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Source is currently being actively processed (heartbeat recent). Cannot restart yet."
+            )
+        else:
+            logger.warning("Overriding stalled job %s (last heartbeat %.1fs ago)", latest_job.id, heartbeat_ago)
+
+    # Clean up existing KUs, Evidence, Conflicts to prevent duplicates
+    await db.execute(delete(Evidence).where(Evidence.source_id == source_id))
+    await db.execute(delete(Conflict).where(Conflict.source_id == source_id))
+    await db.execute(delete(KnowledgeUnit).where(KnowledgeUnit.source_id == source_id))
+
+    # Clean up Qdrant vectors for this source
+    try:
+        from app.database.qdrant import QdrantManager
+        from app.indexing.vector_index import VectorIndex
+        settings = get_settings()
+        qdrant = QdrantManager(settings)
+        vector_idx = VectorIndex(settings, qdrant)
+        await vector_idx.delete_by_source(source_id)
+    except Exception as e:
+        logger.warning("Failed deleting vectors for source %s on retry (continuing): %s", source_id, e)
+
+    new_job_id = str(uuid.uuid4())
+    source.status = 'pending'
+    job = ProcessingJob(
+        id=new_job_id,
+        source_id=source_id,
+        status='pending',
+        current_step='Queued for retry',
+        progress=0.0,
+        error_message=None,
+    )
+    db.add(job)
+    await db.commit()
+
+    file_path = source.file_path
+    youtube_url = source.url if source.source_type == 'youtube' else None
+
+    # Check if uploaded file exists in upload dir
+    settings = get_settings()
+    upload_dir = Path(settings.upload_dir) / source_id
+    if not file_path or not Path(file_path).exists():
+        if upload_dir.exists():
+            vids = list(upload_dir.glob('*.mp4')) + list(upload_dir.glob('*.mkv')) + list(upload_dir.glob('*.webm'))
+            if vids:
+                file_path = str(vids[0])
+            else:
+                uploaded_files = list(upload_dir.glob('*.*'))
+                if uploaded_files:
+                    file_path = str(uploaded_files[0])
+
+    background_tasks.add_task(
+        run_ingestion_pipeline,
+        source_id=source_id,
+        job_id=new_job_id,
+        file_path=file_path,
+        source_type=source.source_type,
+        youtube_url=youtube_url,
+    )
+
+    return {
+        'job_id': new_job_id,
+        'source_id': source_id,
+        'status': 'pending',
+        'progress': 0.0,
+        'current_step': 'Queued for retry',
+        'error': None,
+        'created_at': datetime.utcnow().isoformat(),
+        'updated_at': datetime.utcnow().isoformat(),
+        'elapsed_seconds': 0.0,
+        'last_heartbeat_seconds_ago': 0.0,
+        'is_stalled': False,
     }

@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class LLMProvider(str, Enum):
+    OLLAMA = 'ollama'
     OPENAI = 'openai'
     GEMINI = 'gemini'
     LOCAL = 'local'
@@ -33,6 +34,10 @@ def friendly_llm_error(e: Exception) -> str:
     """
     text = str(e)
     lowered = text.lower()
+    if 'ollama' in lowered and ('unreachable' in lowered or 'connect' in lowered):
+        return 'Ollama service is not reachable. Please start it with: ollama serve'
+    if 'not found' in lowered and 'model' in lowered:
+        return 'Configured Ollama model is not installed. Please pull it with: ollama pull <model>'
     if isinstance(e, ConfigurationError) or 'api key not set' in lowered or 'not configured' in lowered:
         return 'Answer generation is not configured. Retrieved evidence is shown below.'
     if '429' in text or 'quota' in lowered or 'rate limit' in lowered:
@@ -44,14 +49,14 @@ def friendly_llm_error(e: Exception) -> str:
 
 class LLMClient:
     """
-    Multi-provider LLM client.
+    Multi-provider LLM client for VisionRAG-X.
 
     Provider is selected by the LLM_PROVIDER environment variable.
-    Supported values: 'openai', 'gemini', 'local'.
-
-    For 'local': uses the OpenAI-compatible API (works with Ollama, vLLM, LM Studio).
-    For 'openai': uses the official OpenAI Python SDK.
-    For 'gemini': uses the google-generativeai SDK.
+    Supported values:
+      - 'ollama': Local Ollama HTTP API (recommended default, no API keys needed).
+      - 'openai': Official OpenAI Python SDK.
+      - 'gemini': Google generativeai SDK.
+      - 'local': OpenAI-compatible local API (vLLM, LM Studio, etc.).
     """
 
     def __init__(self, settings: Any):
@@ -80,6 +85,61 @@ class LLMClient:
     # ------------------------------------------------------------------
     # Provider implementations
     # ------------------------------------------------------------------
+
+    async def _ollama_complete(
+        self,
+        system: str,
+        user: str,
+        temperature: float,
+        max_tokens: int,
+        json_mode: bool = False,
+    ) -> str:
+        """Native Ollama chat completion API (/api/chat)."""
+        base_url = (getattr(self.settings, 'ollama_base_url', 'http://localhost:11434') or 'http://localhost:11434').rstrip('/')
+        model = getattr(self.settings, 'ollama_model', 'llama3.2:3b') or 'llama3.2:3b'
+        timeout_sec = float(getattr(self.settings, 'llm_timeout_seconds', 120))
+
+        import httpx
+
+        payload: dict = {
+            'model': model,
+            'messages': [
+                {'role': 'system', 'content': system},
+                {'role': 'user', 'content': user},
+            ],
+            'stream': False,
+            'options': {
+                'temperature': temperature,
+                'num_predict': max_tokens,
+            },
+        }
+        if json_mode:
+            payload['format'] = 'json'
+
+        endpoint = f'{base_url}/api/chat'
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_sec, connect=10.0)) as client:
+                res = await client.post(endpoint, json=payload)
+                if res.status_code == 404:
+                    raise ConfigurationError(
+                        f"Ollama model '{model}' not found. Please pull it with: ollama pull {model}"
+                    )
+                res.raise_for_status()
+                data = res.json()
+                msg = data.get('message', {})
+                content = msg.get('content', '')
+                return content or ''
+        except httpx.ConnectError:
+            raise ConfigurationError(
+                f"Ollama service is not reachable at {base_url}. Please ensure Ollama is running ('ollama serve')."
+            )
+        except httpx.TimeoutException:
+            raise TimeoutError(f"Ollama request to {endpoint} timed out after {timeout_sec}s.")
+        except ConfigurationError:
+            raise
+        except Exception as e:
+            logger.error("Ollama completion error: %s", e)
+            raise RuntimeError(f"Ollama completion failed: {e}")
 
     async def _openai_complete(
         self,
@@ -206,10 +266,12 @@ class LLMClient:
         Raises ConfigurationError if the provider is not properly set up.
         Never silently returns dummy text — callers receive a clear error.
         """
-        provider = getattr(self.settings, 'llm_provider', 'openai').lower()
+        provider = getattr(self.settings, 'llm_provider', 'ollama').lower()
         logger.debug('LLM completion: provider=%s model_tokens=%d json_mode=%s', provider, max_tokens, json_mode)
 
-        if provider == LLMProvider.OPENAI:
+        if provider == LLMProvider.OLLAMA:
+            return await self._ollama_complete(system_prompt, user_prompt, temperature, max_tokens, json_mode)
+        elif provider == LLMProvider.OPENAI:
             return await self._openai_complete(system_prompt, user_prompt, temperature, max_tokens, json_mode)
         elif provider == LLMProvider.GEMINI:
             return await self._gemini_complete(system_prompt, user_prompt, temperature, max_tokens, json_mode)
@@ -218,22 +280,51 @@ class LLMClient:
         else:
             raise ConfigurationError(
                 f'Unknown LLM_PROVIDER: "{provider}". '
-                'Valid values: openai | gemini | local'
+                'Valid values: ollama | openai | gemini | local'
             )
 
     async def health_check(self) -> dict:
         """
-        Test LLM connectivity with a minimal prompt.
+        Test LLM connectivity with a minimal prompt or tags query.
 
         Returns a dict suitable for inclusion in the /api/health response.
         """
         import time
-        provider = getattr(self.settings, 'llm_provider', 'openai')
+        provider = getattr(self.settings, 'llm_provider', 'ollama').lower()
         model_names = {
+            'ollama': getattr(self.settings, 'ollama_model', 'llama3.2:3b'),
             'openai': getattr(self.settings, 'openai_model', 'gpt-4o'),
             'gemini': getattr(self.settings, 'gemini_model', 'gemini-1.5-pro'),
             'local': getattr(self.settings, 'local_llm_model', 'unknown'),
         }
+
+        if provider == 'ollama':
+            import httpx
+            base_url = (getattr(self.settings, 'ollama_base_url', 'http://localhost:11434') or 'http://localhost:11434').rstrip('/')
+            model = getattr(self.settings, 'ollama_model', 'llama3.2:3b')
+            try:
+                t0 = time.perf_counter()
+                async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
+                    res = await client.get(f'{base_url}/api/tags')
+                    latency_ms = (time.perf_counter() - t0) * 1000
+                    if res.status_code == 200:
+                        data = res.json()
+                        installed_models = [m.get('name') for m in data.get('models', [])]
+                        model_installed = any(model in name or name in model for name in installed_models)
+                        return {
+                            'available': True,
+                            'provider': 'ollama',
+                            'model': model,
+                            'model_installed': model_installed,
+                            'installed_models': installed_models,
+                            'latency_ms': round(latency_ms, 1),
+                            'error': None if model_installed else f"Configured model '{model}' not found in installed Ollama models.",
+                        }
+                    else:
+                        return {'available': False, 'provider': 'ollama', 'model': model, 'error': f"Ollama HTTP {res.status_code}"}
+            except Exception as e:
+                return {'available': False, 'provider': 'ollama', 'model': model, 'error': f"Ollama unreachable: {e}"}
+
         try:
             t0 = time.perf_counter()
             await self.complete('You are a test assistant.', 'Reply with: OK', max_tokens=5)

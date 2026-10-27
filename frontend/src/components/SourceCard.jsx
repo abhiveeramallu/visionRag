@@ -127,10 +127,10 @@ export default function SourceCard({ source, onDeleted }) {
 
           <div className="mt-1 flex items-center gap-2">
             <Link
-              to={isProcessing ? `/processing/${source.id}` : `/source/${source.id}`}
+              to={isProcessing || source.status === 'failed' ? `/processing/${source.id}` : `/source/${source.id}`}
               className="flex-1 btn-secondary py-2 text-xs font-semibold flex items-center justify-center gap-1.5"
             >
-              {isProcessing ? 'View Progress' : 'Open'}
+              {isProcessing ? 'View Progress' : source.status === 'failed' ? 'Retry / Status' : 'Open'}
               <ArrowRight className="w-3.5 h-3.5" />
             </Link>
             {!isProcessing && source.status === 'completed' && (

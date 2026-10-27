@@ -184,3 +184,42 @@ def test_isolated_valid_claim_scores_moderately(scorer):
     }
     score = scorer.score_segment(isolated_claim, {}, [])
     assert 0.45 <= score <= 0.75
+
+
+def test_evidence_sufficiency_gate_boundaries():
+    """
+    Test evidence sufficiency gate behavior just below and above threshold.
+    """
+    from app.retrieval.retrieval_pipeline import RetrievalPipeline
+    pipeline = RetrievalPipeline(None, None, None, None)
+
+    # 1. No evidence -> must abstain
+    suff, reason = pipeline.check_evidence_sufficiency("What is merge sort?", [])
+    assert suff is False
+    assert "No evidence" in reason
+
+    # 2. Score below threshold (< 0.20) -> must abstain
+    evidence_low_score = [
+        {'id': 'ku_1', 'concept': 'sorting', 'content': 'General discussion of sorting.', 'confidence': 0.9}
+    ]
+    suff, reason = pipeline.check_evidence_sufficiency("What is merge sort?", evidence_low_score, max_score=0.19)
+    assert suff is False
+    assert "below minimum sufficiency threshold" in reason.lower()
+
+    # 3. Score at or above threshold (0.25) with subject overlap -> must pass
+    evidence_good = [
+        {'id': 'ku_1', 'concept': 'Merge Sort', 'content': 'Merge sort divides array recursively in O(n log n).', 'confidence': 0.9}
+    ]
+    suff, reason = pipeline.check_evidence_sufficiency("What is merge sort worst case?", evidence_good, max_score=0.25)
+    assert suff is True
+    assert "sufficient" in reason.lower()
+
+    # 4. Out-of-domain query with distinct subjects having zero overlap with evidence -> must abstain
+    suff, reason = pipeline.check_evidence_sufficiency(
+        "What is quantum Fourier transform in Shor algorithm?",
+        evidence_good,
+        max_score=0.35
+    )
+    assert suff is False
+    assert "not grounded in retrieved evidence" in reason.lower()
+

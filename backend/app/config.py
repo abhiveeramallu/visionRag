@@ -18,7 +18,10 @@ class Settings(BaseSettings):
     )
 
     # === LLM ===
-    llm_provider: str = Field(default='openai', description='LLM provider: openai | gemini | local')
+    llm_provider: str = Field(default='ollama', description='LLM provider: ollama | openai | gemini | local')
+    ollama_base_url: str = Field(default='http://localhost:11434', description='Ollama base URL')
+    ollama_model: str = Field(default='llama3.2:3b', description='Ollama model name')
+    llm_timeout_seconds: int = Field(default=120, description='LLM request timeout in seconds')
     openai_api_key: str = Field(default='', description='OpenAI API key')
     openai_base_url: str = Field(default='https://api.openai.com/v1')
     openai_model: str = Field(default='gpt-4o')
@@ -48,6 +51,11 @@ class Settings(BaseSettings):
 
     # === Processing ===
     frame_interval: float = Field(default=2.0, description='Seconds between frame samples')
+    ocr_max_frames: int = Field(default=120, description='Maximum frames to sample for OCR')
+    ocr_concurrency: int = Field(default=2, description='Max concurrent OCR processes')
+    ocr_timeout_seconds: int = Field(default=300, description='Max seconds for OCR stage')
+    ingestion_stage_timeout: int = Field(default=300, description='Default timeout in seconds per ingestion stage')
+    ocr_frame_diff_threshold: float = Field(default=2.0, description='Percentage visual diff to consider frame duplicate')
     whisper_model: str = Field(default='base', description='tiny|base|small|medium|large-v2')
     whisper_device: str = Field(default='cpu', description='cpu|cuda')
     whisper_compute_type: str = Field(default='int8', description='int8|float16|float32')
@@ -74,12 +82,12 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_origins.split(',')]
 
     def is_llm_configured(self) -> bool:
-        if self.llm_provider == 'openai':
+        if self.llm_provider in ('ollama', 'local'):
+            return bool(self.ollama_base_url or self.local_llm_base_url)
+        elif self.llm_provider == 'openai':
             return bool(self.openai_api_key and self.openai_api_key != 'your-openai-api-key-here')
         elif self.llm_provider == 'gemini':
             return bool(self.gemini_api_key and self.gemini_api_key != 'your-gemini-api-key-here')
-        elif self.llm_provider == 'local':
-            return bool(self.local_llm_base_url)
         return False
 
 

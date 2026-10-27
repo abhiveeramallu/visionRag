@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
             for job in orphaned_jobs:
                 job.status = 'failed'
                 job.current_step = 'Interrupted'
-                job.error_message = 'Processing was interrupted by a server restart. Please re-upload this source.'
+                job.error_message = 'Processing was interrupted by a server restart. Click Retry to resume.'
                 job.updated_at = _datetime.utcnow()
 
                 src_result = await _db.execute(_select(Source).where(Source.id == job.source_id))

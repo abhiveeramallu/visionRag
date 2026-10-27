@@ -223,6 +223,19 @@ async def query(request: QueryRequest, db: AsyncSession = Depends(get_db)):
             'applied': len(pipeline_result.get('lineage_substitutions', [])) > 0,
             'substitutions': pipeline_result.get('lineage_substitutions', []),
         },
+        'llm': {
+            'provider': settings.llm_provider,
+            'model': (
+                settings.ollama_model if settings.llm_provider == 'ollama' else (
+                    settings.openai_model if settings.llm_provider == 'openai' else settings.local_llm_model
+                )
+            ),
+            'generated': 'answer_result' in locals() and bool(answer_result.get('answer')),
+            'citation_validation': {
+                'valid_indices': answer_result.get('valid_citation_indices', []) if 'answer_result' in locals() else [],
+                'invalid_indices': answer_result.get('invalid_citation_indices', []) if 'answer_result' in locals() else [],
+            },
+        },
         'conflicts': {
             'total_detected': len(conflict_responses),
             'items': conflict_responses,

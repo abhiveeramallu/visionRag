@@ -1,16 +1,18 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePolling } from '../hooks/usePolling'
 import ProcessingStatus from '../components/ProcessingStatus'
-import { getSource } from '../services/api'
+import { getSource, retrySource } from '../services/api'
 import { FileText, Youtube, Film, Music } from 'lucide-react'
 
 export default function Processing() {
   const { sourceId } = useParams()
   const navigate = useNavigate()
-  const { status: jobStatus, error: pollError } = usePolling(sourceId, 2000)
+  const { status: jobStatus, error: pollError, isStalled, resetPolling } = usePolling(sourceId, 2000)
   const [sourceInfo, setSourceInfo] = useState(null)
   const [countdown, setCountdown] = useState(5)
+  const [retrying, setRetrying] = useState(false)
+  const [retryError, setRetryError] = useState('')
 
   useEffect(() => {
     if (sourceId) {
@@ -19,6 +21,21 @@ export default function Processing() {
         .catch(() => {})
     }
   }, [sourceId])
+
+  const handleRetry = useCallback(async () => {
+    setRetrying(true)
+    setRetryError('')
+    try {
+      await retrySource(sourceId)
+      resetPolling()
+      const data = await getSource(sourceId)
+      setSourceInfo(data)
+    } catch (err) {
+      setRetryError(err.message || 'Failed to trigger retry.')
+    } finally {
+      setRetrying(false)
+    }
+  }, [sourceId, resetPolling])
 
   // Auto navigate to chat on completion
   useEffect(() => {
@@ -63,13 +80,25 @@ export default function Processing() {
         </div>
       )}
 
+      {retryError && (
+        <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs">
+          {retryError}
+        </div>
+      )}
+
       {jobStatus?.status === 'completed' && (
         <div className="p-3 rounded-xl bg-green-50 border border-green-200 text-green-800 text-xs text-center font-medium">
           Processing Complete! Auto-redirecting to AI Chat in {countdown} seconds...
         </div>
       )}
 
-      <ProcessingStatus jobStatus={jobStatus} sourceId={sourceId} />
+      <ProcessingStatus
+        jobStatus={jobStatus}
+        sourceId={sourceId}
+        isStalled={isStalled}
+        onRetry={handleRetry}
+        isRetrying={retrying}
+      />
     </div>
   )
 }

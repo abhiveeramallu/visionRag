@@ -1,8 +1,8 @@
 """
 OCR extraction module for VisionRAG-X.
 
-Supports Tesseract (system binary) and PaddleOCR for robust text extraction
-from images and video frames. Prevents thread deadlock on macOS ARM64.
+Supports Tesseract (system binary) with bounded concurrency, frame deduplication,
+pre-scaling, and fallback protection. Prevents thread deadlock on macOS ARM64.
 """
 
 import asyncio
@@ -10,8 +10,12 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, Coroutine, List, Optional, Tuple
+
+from PIL import Image
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +34,7 @@ class ConfigurationError(Exception):
 class OCRExtractor:
     """
     Optical Character Recognition using Tesseract (preferred for stability on macOS)
-    or PaddleOCR with fallback protection.
+    with safe fallback, bounded concurrency, frame deduplication, and stage timeouts.
 
     Groups nearby text boxes into paragraph-level segments.
     """
@@ -40,6 +44,7 @@ class OCRExtractor:
         self._model = None
         self._paddleocr_available: Optional[bool] = None
         self._tesseract_path: Optional[str] = self._find_tesseract()
+        self._concurrency: int = getattr(settings, "ocr_concurrency", 2) or 2
 
     # ------------------------------------------------------------------ #
     # Availability / model loading
@@ -70,6 +75,7 @@ class OCRExtractor:
         return bool(self._paddleocr_available)
 
     def _load_paddle_model(self):
+        """Lazy load PaddleOCR model only if Tesseract is strictly unavailable."""
         if self._model is None:
             from paddleocr import PaddleOCR
             lang = getattr(self.settings, "ocr_language", "en")
@@ -84,62 +90,116 @@ class OCRExtractor:
             logger.info("PaddleOCR model loaded successfully")
 
     # ------------------------------------------------------------------ #
+    # Image preprocessing
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _prepare_image_for_ocr(image_path: Path, max_dim: int = 1920) -> Path:
+        """
+        Resize oversized frames to avoid excessive memory and latency during OCR.
+        Returns the original path if within bounds, or a temporary resized copy.
+        """
+        try:
+            with Image.open(image_path) as img:
+                w, h = img.size
+                if max(w, h) > max_dim:
+                    scale = max_dim / float(max(w, h))
+                    new_size = (int(w * scale), int(h * scale))
+                    resized = img.resize(new_size, Image.Resampling.BILINEAR)
+                    tmp_file = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                    tmp_path = Path(tmp_file.name)
+                    resized.save(tmp_path, format="JPEG", quality=85)
+                    tmp_file.close()
+                    return tmp_path
+        except Exception as e:
+            logger.debug("Failed pre-processing image %s: %s", image_path, e)
+        return image_path
+
+    # ------------------------------------------------------------------ #
     # Core OCR
     # ------------------------------------------------------------------ #
 
-    def _run_tesseract(self, image_path: Path) -> List[dict]:
-        """Execute Tesseract CLI on image."""
+    def _run_tesseract(self, image_path: Path) -> Tuple[bool, List[dict]]:
+        """
+        Execute Tesseract CLI on image.
+        Returns (success, raw_boxes).
+        If Tesseract runs with returncode 0 and produces empty text, success is True
+        and raw_boxes is [].
+        """
         if not self._tesseract_path:
-            return []
+            return False, []
         try:
             cmd = [self._tesseract_path, str(image_path), "stdout"]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if res.returncode == 0 and res.stdout.strip():
-                lines = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=12)
+            if res.returncode == 0:
                 raw_boxes = []
-                for idx, line in enumerate(lines):
-                    raw_boxes.append({
-                        "text": line,
-                        "confidence": 0.88,
-                        "bbox": [[0, idx * 25], [100, idx * 25], [100, (idx + 1) * 25], [0, (idx + 1) * 25]],
-                    })
-                return raw_boxes
+                if res.stdout.strip():
+                    lines = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+                    for idx, line in enumerate(lines):
+                        raw_boxes.append({
+                            "text": line,
+                            "confidence": 0.88,
+                            "bbox": [[0, idx * 25], [100, idx * 25], [100, (idx + 1) * 25], [0, (idx + 1) * 25]],
+                        })
+                return True, raw_boxes
+            else:
+                logger.warning(
+                    "Tesseract failed for %s (exit code %d): %s",
+                    image_path, res.returncode, res.stderr.strip()[:200]
+                )
+                return False, []
+        except subprocess.TimeoutExpired:
+            logger.warning("Tesseract subprocess timed out after 12s for %s", image_path)
+            return False, []
         except Exception as e:
-            logger.warning("Tesseract execution failed: %s", e)
-        return []
+            logger.warning("Tesseract execution exception for %s: %s", image_path, e)
+            return False, []
 
     def _run_ocr(self, image_path: Path) -> List[dict]:
         """
         Run OCR on a single image and return raw bounding-box results.
-        Tries Tesseract first; falls back to PaddleOCR.
+        Tries Tesseract first; only falls back to PaddleOCR if Tesseract is missing
+        or threw an execution failure (never on empty text).
         """
-        if self._tesseract_path:
-            res = self._run_tesseract(image_path)
-            if res:
-                return res
-
-        # Fallback to PaddleOCR if Tesseract didn't return text or is missing
+        prep_path = self._prepare_image_for_ocr(image_path)
+        is_temp = prep_path != image_path
         try:
-            self._load_paddle_model()
-            result = self._model.ocr(str(image_path), cls=False)
-            raw_boxes = []
-            if result is None:
-                return raw_boxes
+            if self._tesseract_path:
+                tesseract_ok, res = self._run_tesseract(prep_path)
+                if tesseract_ok:
+                    # Tesseract succeeded (even if empty text)
+                    return res
 
-            for page_result in result:
-                if page_result is None:
-                    continue
-                for line in page_result:
-                    bbox, (text, confidence) = line
-                    raw_boxes.append({
-                        "text": text,
-                        "confidence": float(confidence),
-                        "bbox": bbox,
-                    })
-            return raw_boxes
-        except Exception as e:
-            logger.warning("PaddleOCR execution failed: %s", e)
+            # Fallback to PaddleOCR only if Tesseract was missing or crashed
+            if self._paddleocr_available is not False:
+                try:
+                    self._load_paddle_model()
+                    result = self._model.ocr(str(prep_path), cls=False)
+                    raw_boxes = []
+                    if result is None:
+                        return raw_boxes
+
+                    for page_result in result:
+                        if page_result is None:
+                            continue
+                        for line in page_result:
+                            bbox, (text, confidence) = line
+                            raw_boxes.append({
+                                "text": text,
+                                "confidence": float(confidence),
+                                "bbox": bbox,
+                            })
+                    return raw_boxes
+                except Exception as e:
+                    logger.warning("PaddleOCR fallback failed: %s", e)
+                    return []
             return []
+        finally:
+            if is_temp and prep_path.exists():
+                try:
+                    prep_path.unlink()
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------ #
     # Text grouping
@@ -147,9 +207,7 @@ class OCRExtractor:
 
     @staticmethod
     def _group_into_paragraphs(raw_boxes: List[dict], y_gap_threshold: float = 20.0) -> List[str]:
-        """
-        Group bounding-box text lines into paragraphs by vertical proximity.
-        """
+        """Group bounding-box text lines into paragraphs by vertical proximity."""
         if not raw_boxes:
             return []
 
@@ -247,29 +305,136 @@ class OCRExtractor:
         )
         return segments
 
+    # ------------------------------------------------------------------ #
+    # Frame list extraction with Deduplication, Concurrency & Callbacks
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _compute_thumbnail_fingerprint(image_path: Path) -> Optional[np.ndarray]:
+        """Compute a low-resolution grayscale thumbnail fingerprint for duplicate detection."""
+        try:
+            with Image.open(image_path) as img:
+                thumb = img.convert("L").resize((64, 64), Image.Resampling.BILINEAR)
+                return np.array(thumb, dtype=np.float32)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _is_duplicate_frame(fp1: Optional[np.ndarray], fp2: Optional[np.ndarray], threshold_pct: float = 2.0) -> bool:
+        """Return True if two frame fingerprints differ by less than threshold_pct."""
+        if fp1 is None or fp2 is None:
+            return False
+        diff = np.mean(np.abs(fp1 - fp2)) / 255.0 * 100.0
+        return diff < threshold_pct
+
     async def extract_from_frame_list(
         self,
         frames: List[dict],
         source_id: str,
+        progress_callback: Optional[Callable[[int, int], Coroutine]] = None,
     ) -> List[dict]:
-        """Run OCR over a list of frame dicts."""
-        all_segments: List[dict] = []
-        for frame in frames:
-            frame_path = Path(frame.get("frame_path", ""))
-            timestamp = frame.get("timestamp", 0.0)
-            segments = await self.extract_from_image(
-                frame_path,
-                source_id=source_id,
-                timestamp=timestamp,
-            )
-            all_segments.extend(segments)
+        """
+        Run OCR over a list of frame dicts with:
+        1. Sub-sampling if frame count exceeds ocr_max_frames.
+        2. Visual duplicate frame skipping (consecutive slides).
+        3. Bounded concurrency via Semaphore to prevent event loop starvation.
+        4. Progress callback invocation.
+        5. Overall stage timeout.
+        """
+        if not frames:
+            return []
 
-        logger.info(
-            "OCR complete: %d segments from %d frames",
-            len(all_segments),
-            len(frames),
-        )
-        return all_segments
+        max_frames = getattr(self.settings, "ocr_max_frames", 120) or 120
+        timeout_seconds = float(getattr(self.settings, "ocr_timeout_seconds", 300) or 300)
+        diff_threshold = float(getattr(self.settings, "ocr_frame_diff_threshold", 2.0) or 2.0)
+
+        # 1. Sample frames if exceeding cap
+        if len(frames) > max_frames:
+            step = max(1, len(frames) // max_frames)
+            sampled_frames = frames[::step][:max_frames]
+            logger.info("Sampled %d frames from %d total for OCR", len(sampled_frames), len(frames))
+        else:
+            sampled_frames = frames
+
+        total_frames = len(sampled_frames)
+        semaphore = asyncio.Semaphore(self._concurrency)
+        processed_count = 0
+
+        async def _run_extraction():
+            nonlocal processed_count
+
+            # Step 1: Detect duplicate frames in milliseconds using thumbnails
+            frames_to_ocr = []
+            frame_duplicates_map = {}  # index -> previous_index
+            prev_fp = None
+            last_to_ocr_idx = None
+
+            for i, frame in enumerate(sampled_frames):
+                frame_path = Path(frame.get("frame_path", ""))
+                curr_fp = self._compute_thumbnail_fingerprint(frame_path)
+                if prev_fp is not None and self._is_duplicate_frame(prev_fp, curr_fp, diff_threshold) and last_to_ocr_idx is not None:
+                    frame_duplicates_map[i] = last_to_ocr_idx
+                else:
+                    frames_to_ocr.append((i, frame))
+                    last_to_ocr_idx = i
+                    prev_fp = curr_fp
+
+            # Step 2: Concurrently extract text from distinct frames with semaphore
+            async def _ocr_task(idx: int, frame: dict):
+                nonlocal processed_count
+                frame_path = Path(frame.get("frame_path", ""))
+                timestamp = frame.get("timestamp", 0.0)
+                async with semaphore:
+                    try:
+                        segments = await self.extract_from_image(
+                            frame_path,
+                            source_id=source_id,
+                            timestamp=timestamp,
+                        )
+                    except Exception as exc:
+                        logger.warning("Error during OCR on frame %s: %s", frame_path, exc)
+                        segments = []
+
+                    processed_count += 1
+                    if progress_callback and (processed_count % 3 == 0 or processed_count == len(frames_to_ocr)):
+                        try:
+                            await progress_callback(processed_count, total_frames)
+                        except Exception as e:
+                            logger.debug("OCR progress callback error: %s", e)
+
+                    return idx, segments
+
+            tasks = [_ocr_task(idx, f) for idx, f in frames_to_ocr]
+            ocr_results = await asyncio.gather(*tasks) if tasks else []
+            results_by_idx = dict(ocr_results)
+
+            # Step 3: Stitch chronological segments, extending time bounds for duplicate frames
+            all_segments = []
+            for i, frame in enumerate(sampled_frames):
+                ts = frame.get("timestamp", 0.0)
+                if i in results_by_idx:
+                    all_segments.extend(results_by_idx[i])
+                elif i in frame_duplicates_map:
+                    ref_idx = frame_duplicates_map[i]
+                    for seg in results_by_idx.get(ref_idx, []):
+                        seg["timestamp_end"] = ts
+
+            logger.info(
+                "OCR complete: %d segments from %d frames (%d duplicate frames skipped)",
+                len(all_segments),
+                total_frames,
+                len(frame_duplicates_map),
+            )
+            return all_segments
+
+        try:
+            return await asyncio.wait_for(_run_extraction(), timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "OCR stage timed out after %ds (%d/%d frames processed).",
+                timeout_seconds, processed_count, total_frames
+            )
+            return []
 
     # ------------------------------------------------------------------ #
     # Health check
@@ -285,4 +450,3 @@ class OCRExtractor:
             "language": lang,
             "error": None if available else "Neither Tesseract nor PaddleOCR available",
         }
-

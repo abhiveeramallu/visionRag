@@ -107,6 +107,30 @@ function TracePanel({ trace, abstained, latencyMs }) {
               </p>
             </div>
           </div>
+
+          {/* 4. LLM Generation & Citation Validation */}
+          {trace.llm && (
+            <div className="space-y-1">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-ink-400 flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-primary-600" />
+                LLM Generation &amp; Citation Grounding
+              </span>
+              <div className="p-2 bg-white rounded-lg border border-gray-100 text-[11px] text-ink-700 flex items-center justify-between">
+                <div>
+                  <span className="font-semibold text-ink-800">
+                    Provider: <span className="font-mono text-primary-700 uppercase text-[10px] px-1 py-0.5 bg-primary-50 rounded border border-primary-200">{trace.llm.provider || 'ollama'}</span>
+                  </span>
+                  <span className="text-ink-400 mx-1.5">&middot;</span>
+                  <span>Model: <span className="font-mono text-ink-600">{trace.llm.model || 'llama3.2:3b'}</span></span>
+                </div>
+                {trace.llm.citation_validation && (
+                  <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                    &bull; {trace.llm.citation_validation.valid_indices?.length || 0} Grounded Citation(s)
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

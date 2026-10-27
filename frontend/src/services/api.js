@@ -35,6 +35,7 @@ export const uploadFile = (file, onProgress) => {
 }
 
 export const getStatus = (sourceId) => api.get(`/status/${sourceId}`)
+export const retrySource = (sourceId) => api.post(`/sources/${sourceId}/retry`)
 export const getSources = () => api.get('/sources')
 export const getSource = (sourceId) => api.get(`/source/${sourceId}`)
 export const deleteSource = (sourceId) => api.delete(`/source/${sourceId}`)

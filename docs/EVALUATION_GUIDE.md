@@ -13,15 +13,15 @@ VisionRAG-X evaluates multimodal retrieval and verification on two structured be
 - **Corpus**: 15 multimodal educational units (formulas, code snippets, OCR text, ASR speech, diagram captions).
 - **Queries**: 20 total questions:
   - 18 answerable queries across 5 categories (`code`, `conceptual`, `factual`, `formula`, `timestamp`).
-  - 2 unanswerable queries (`syn_q19`, `syn_q20`) designed to test out-of-domain abstention and boundary verification.
-- **Planted Conflicts**: 2 verified cross-modal contradictions between speech commentary and on-screen slides.
+  - 2 unanswerable queries (`q17`, `q18`) designed to test out-of-domain abstention and evidence-boundary verification.
+- **Planted Conflicts**: 2 verified cross-modal contradictions between speech commentary and on-screen slides (evaluated across 5 conflict-labelled queries).
 
 ### 1.2. Real-Video Lecture Benchmark (`evaluation/benchmark/real_video_dataset.json`)
 - **Corpus**: 18 multimodal atoms extracted from real computer science lecture recordings (MIT 6.006 / Algorithms).
 - **Queries**: 15 total questions:
-  - 14 answerable queries with gold citation unit IDs.
-  - 1 unanswerable query (`rv_q15`) designed to test out-of-domain abstention.
-- **Real-World Errata**: Includes instructor verbal slip ("merge sort is linear time") corrected on subsequent slide, and Page 2 slide typo corrected on Page 6 erratum slide.
+  - 13 answerable queries across 5 categories (`code`, `conceptual`, `factual`, `formula`, `visual`).
+  - 2 unanswerable queries (`rv_q14`, `rv_q15`) designed to test out-of-domain abstention.
+- **Real-World Errata & Conflicts**: Includes 3 conflict-labelled queries (`rv_q04`, `rv_q08`, `rv_q10`) evaluating verbal slip corrections and slide errata (e.g., Page 2 formula corrected on Page 6 erratum sheet).
 
 ---
 

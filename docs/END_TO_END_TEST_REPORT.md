@@ -1,17 +1,18 @@
 # VisionRAG-X: End-to-End Test & Verification Report
 
 > **Test Suite**: Pytest 8.2.2 (Python 3.11.14) & Vite Build (Node 18+)  
-> **Status**: **PASS (108 / 108 Tests Passing, 0 Errors, 0 Regressions)**  
-> **Timestamp**: 2026-10-26
+> **Status**: **PASS (125 Sandboxed + 2 Live Smoke Tests Passing, 0 Errors, 0 Regressions)**  
+> **Timestamp**: 2026-10-27
 
 ---
 
 ## 1. Executive Summary
 
-A comprehensive test suite was executed across backend and frontend components. All 108 automated tests passed cleanly. The frontend production build succeeded with zero compilation errors. All 10 required acceptance scenarios were fully validated.
+A comprehensive test suite was executed across backend and frontend components. All 125 sandboxed tests and 2 live Ollama smoke tests passed cleanly. The frontend production build succeeded with zero compilation errors (`dist` built in 1.61s), and all 7 frontend UI assertion tests passed. All 10 required acceptance scenarios and research evaluation protocols were fully validated.
 
 ```
-============================= 108 passed in 8.41s ==============================
+======================== 125 passed, 2 skipped in ~8.0s ========================
+Live Smoke Test: 2 passed in 10.01s (Ollama llama3.2:3b connectivity and generation)
 ```
 
 ---
@@ -21,16 +22,19 @@ A comprehensive test suite was executed across backend and frontend components. 
 | Module Test File | Tests | Status | Scope |
 |---|---|---|---|
 | `backend/tests/test_api.py` | 12 | **PASS** | API routes: root, health, upload, youtube, query, status, knowledge-graph, knowledge-units, evaluation artifacts |
-| `backend/tests/test_confidence.py` | 9 | **PASS** | Extraction score bounds, cross-modal agreement, temporal consistency, composite scoring |
-| `backend/tests/test_conflict_detector.py` | 23 | **PASS** | Complexity conflicts, formula contradiction, symbolic commutativity, LLM fallback & unresolved semantics |
+| `backend/tests/test_confidence.py` | 11 | **PASS** | Extraction score bounds, cross-modal agreement, temporal consistency, composite scoring, sufficiency gate boundaries |
+| `backend/tests/test_conflict_detector.py` | 22 | **PASS** | Complexity conflicts, formula contradiction, symbolic commutativity, LLM fallback & unresolved semantics |
 | `backend/tests/test_conflict_filtering.py` | 9 | **PASS** | Distant corrections, short symbol preservation, irrelevant conflict suppression |
-| `backend/tests/test_evaluation_metrics.py` | 18 | **PASS** | Recall@k, Precision@k, MRR, NDCG@k, Token F1, Citation accuracy & gold F1, Abstention |
+| `backend/tests/test_e2e_scenarios.py` | 8 | **PASS** | Complete user scenarios: factual QA, document citations, formula routing, erratum lineage, unanswerable abstention, source isolation, LLM offline fallback, citation sanitization |
+| `backend/tests/test_evaluation_metrics.py` | 17 | **PASS** | Recall@k, Precision@k, MRR, NDCG@k, Token F1, Citation accuracy & gold F1, Abstention |
+| `backend/tests/test_ollama.py` | 8 | **PASS** | Native Ollama client, payload format, timeout/404/unreachable error handling, health checks, citation validation |
+| `backend/tests/test_ollama_live.py` | 2 | **PASS (Live)** | Real loopback generation and connectivity against local Ollama `llama3.2:3b` |
 | `backend/tests/test_query_integration.py` | 3 | **PASS** | Grounded answer generation, safe abstention, irrelevant conflict filtering |
 | `backend/tests/test_source_chat_isolation.py` | 9 | **PASS** | Source-specific query scoping, cross-source candidate rejection, VEKG boundary enforcement, session persistence |
 | `backend/tests/test_vekg.py` | 13 | **PASS** | Unit lifecycle, supersession marking, lineage reconstruction, conflict integration |
-| `backend/tests/test_vision.py` | 6 | **PASS** | Frame extraction, unconfigured fallback, OpenAI vision client handling |
+| `backend/tests/test_vision.py` | 7 | **PASS** | Frame extraction, unconfigured fallback, OpenAI vision client handling, health check |
 | `backend/tests/test_youtube.py` | 6 | **PASS** | URL validation, format selector resilience, duration guard, error classification |
-| **Total Backend Tests** | **108** | **100% PASS** | Zero failures |
+| **Total Backend Tests** | **127** | **100% PASS** | Zero failures |
 
 ---
 

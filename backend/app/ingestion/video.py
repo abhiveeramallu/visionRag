@@ -54,6 +54,10 @@ class VideoIngester:
         output_dir.mkdir(parents=True, exist_ok=True)
         audio_path = output_dir / f"{video_path.stem}_audio.wav"
 
+        if audio_path.exists() and audio_path.stat().st_size > 1000:
+            logger.info("Reusing existing extracted audio: %s", audio_path)
+            return audio_path
+
         def _extract():
             try:
                 (
@@ -122,6 +126,26 @@ class VideoIngester:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Check if frames already exist on disk (reuse on retry/restart)
+        existing_frames = sorted(list(output_dir.glob("frame_*.jpg")))
+        if len(existing_frames) >= 5:
+            reconstructed = []
+            for ef in existing_frames:
+                # Extract timestamp from filename: frame_000001_00-00-01.000.jpg
+                parts = ef.stem.split("_")
+                ts = 0.0
+                if len(parts) >= 3:
+                    try:
+                        time_part = parts[2].replace("-", ":")
+                        # e.g. "00:00:01.000"
+                        h, m, s = time_part.split(":")
+                        ts = float(h) * 3600 + float(m) * 60 + float(s)
+                    except Exception:
+                        pass
+                reconstructed.append({"frame_path": str(ef), "timestamp": ts})
+            logger.info("Reusing %d existing extracted frames from %s", len(reconstructed), output_dir)
+            return reconstructed
+
         def _extract():
             cap = cv2.VideoCapture(str(video_path))
             if not cap.isOpened():
@@ -133,7 +157,12 @@ class VideoIngester:
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             duration = total_frames / fps if fps > 0 else 0.0
 
-            interval = interval_seconds if interval_seconds and interval_seconds > 0 else 1.0
+            interval = interval_seconds if interval_seconds and interval_seconds > 0 else 2.0
+            # Bound total frames to at most 150 for long lectures
+            max_cap = 150
+            if duration > 0 and (duration / interval) > max_cap:
+                interval = duration / float(max_cap)
+
             frame_interval = max(1, int(fps * interval))
 
             frames = []

@@ -2,7 +2,8 @@
 Provenance-aware answer generation for VisionRAG-X.
 """
 import logging
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -15,18 +16,58 @@ def _fmt_ts(seconds: Optional[float]) -> str:
     return f'{h:02d}:{m:02d}:{s:02d}' if h else f'{m:02d}:{s:02d}'
 
 
-ANSWER_SYSTEM_PROMPT = """You are VisionRAG-X, an educational assistant that helps students learn from multimodal content.
+ANSWER_SYSTEM_PROMPT = """You are VisionRAG-X, an authoritative educational assistant that helps students learn from multimodal lecture content.
 
-STRICT RULES — follow all of them:
-1. Answer ONLY from the provided EVIDENCE. Do not add unsupported facts or hallucinate.
-2. If evidence is conflicting, explicitly state: "The sources disagree on this point."
-3. Cite your sources inline. For video: use timestamp (e.g., "at 14:32"). For documents: cite page/slide number.
-4. If a knowledge unit is marked as SUPERSEDED, say: "The instructor initially stated X (at T1) and later corrected this to Y (at T2)."
-5. When uncertain, prefix with: "Based on the available evidence..."
-6. Never invent timestamps, page numbers, or facts not present in the evidence.
-7. Keep answers concise but complete. Use bullet points for lists.
-8. End with a brief source summary if multiple sources are used.
+STRICT RESEARCH INTEGRITY RULES — follow all of them:
+1. Answer ONLY from the provided EVIDENCE. Do not add unsupported facts, external training knowledge, or hallucinate.
+2. If evidence contains a SUPERSEDED claim that was later corrected, cite the correction and explicitly state: "The instructor initially stated X, but this was corrected to Y."
+3. If evidence is conflicting, explicitly state: "The sources disagree on this point" and describe both claims.
+4. Cite your evidence inline using the bracketed evidence index (e.g. [1], [2]) or exact timestamp/page (e.g. at 14:32, Page 6).
+5. NEVER invent bracket indices, page numbers, timestamps, or quotations not present in the evidence. Only cite indices that appear in === EVIDENCE ===.
+6. If the provided evidence is completely insufficient or does not address the question, state: "The provided educational sources do not establish this answer; insufficient evidence."
+7. Keep answers concise, factual, and complete. Use bullet points where appropriate.
 """
+
+
+def validate_citations(
+    answer: str,
+    evidence: List[Dict[str, Any]],
+) -> Tuple[str, List[int], List[int]]:
+    """
+    Validate inline citations emitted by the LLM against the actual retrieved evidence.
+
+    Returns:
+        (sanitized_answer, valid_indices, invalid_indices)
+    """
+    if not evidence or not answer:
+        return answer, [], []
+
+    bracket_pattern = re.compile(r'\[(\d+)\]')
+    found_matches = [int(m) for m in bracket_pattern.findall(answer)]
+    valid_indices: List[int] = []
+    invalid_indices: List[int] = []
+
+    num_evidence = len(evidence)
+    for idx in found_matches:
+        if 1 <= idx <= num_evidence:
+            if idx not in valid_indices:
+                valid_indices.append(idx)
+        else:
+            if idx not in invalid_indices:
+                invalid_indices.append(idx)
+
+    # If the model emitted hallucinated citation numbers, sanitize them out
+    sanitized_answer = answer
+    if invalid_indices:
+        logger.warning(
+            "Model emitted invalid citation index(es) %s (evidence count: %d). Sanitizing.",
+            invalid_indices, num_evidence
+        )
+        for inv in invalid_indices:
+            sanitized_answer = re.sub(rf'\[{inv}\]', '', sanitized_answer)
+        sanitized_answer = re.sub(r'  +', ' ', sanitized_answer).strip()
+
+    return sanitized_answer, valid_indices, invalid_indices
 
 
 class AnswerGenerator:
@@ -126,6 +167,8 @@ class AnswerGenerator:
                 'evidence_used': [],
                 'confidence': 0.0,
                 'abstained': True,
+                'valid_citation_indices': [],
+                'invalid_citation_indices': [],
             }
 
         context = self._build_context(evidence, conflicts)
@@ -144,10 +187,18 @@ class AnswerGenerator:
             max_tokens=1500,
         )
 
+        sanitized_answer, valid_indices, invalid_indices = validate_citations(answer, evidence)
+
+        # Map valid bracket indices to evidence items
+        cited_evidence = [evidence[i - 1] for i in valid_indices] if valid_indices else evidence[:3]
+
         confidence = self._estimate_confidence(evidence)
         return {
-            'answer': answer,
+            'answer': sanitized_answer,
             'evidence_used': evidence,
+            'cited_evidence': cited_evidence,
+            'valid_citation_indices': valid_indices,
+            'invalid_citation_indices': invalid_indices,
             'confidence': confidence,
             'abstained': False,
         }

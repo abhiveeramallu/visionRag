@@ -15,12 +15,18 @@ VisionRAG-X runs directly on macOS/Linux using native Python virtual environment
 - **PostgreSQL**: Running locally on `localhost:5432` with database `visionrag_x`
 - **Tesseract OCR**: `brew install tesseract`
 - **FFmpeg**: `brew install ffmpeg`
+- **Ollama**: `brew install ollama` (with model `llama3.2:3b`)
 
-### 1.2. Database Verification
-Ensure PostgreSQL is active:
+### 1.2. Database & Local LLM Verification
+Ensure PostgreSQL and Ollama are active:
 ```bash
 brew services start postgresql@16
 createdb visionrag_x 2>/dev/null || true
+
+# Start Ollama service and ensure llama3.2:3b is pulled
+ollama serve &
+ollama pull llama3.2:3b
+curl -s http://localhost:11434/api/tags
 ```
 
 ---

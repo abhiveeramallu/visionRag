@@ -7,10 +7,8 @@ from unittest.mock import MagicMock
 
 
 @pytest.fixture(scope='session')
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+def event_loop_policy():
+    return asyncio.get_event_loop_policy()
 
 
 @pytest.fixture
