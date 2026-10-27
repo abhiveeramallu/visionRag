@@ -51,15 +51,14 @@ def test_youtube_invalid_url_returns_422(client):
 
 def test_youtube_valid_url_accepted(client):
     """POST /api/youtube with a valid YouTube URL should return 202 (processing queued)."""
-    with patch('app.database.postgres.get_db') as mock_db_dep:
+    with patch('app.api.upload.run_ingestion_pipeline', new_callable=AsyncMock), \
+         patch('app.database.postgres.get_db') as mock_db_dep:
         mock_session = AsyncMock()
         mock_session.add = MagicMock()
         mock_session.commit = AsyncMock()
         mock_db_dep.return_value.__aiter__.return_value = iter([mock_session])
 
-        # We can't fully test the DB here without a real DB, just check URL validation
         response = client.post('/api/youtube', json={'url': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'})
-        # Should not be 422 (URL is valid format)
         assert response.status_code != 422
 
 

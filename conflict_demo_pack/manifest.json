@@ -1,0 +1,122 @@
+{
+  "pack_id": "visionrag-x-conflict-demo-pack",
+  "pack_name": "VisionRAG-X Conflict Demo Pack",
+  "version": "1.0.0",
+  "created_at": "2026-10-27T12:30:00Z",
+  "author": "VisionRAG-X Research Team",
+  "description": "Authoritative multimodal test and demonstration fixture pack for cross-modal conflict detection, temporal errata resolution, and verified retrieval in VisionRAG-X.",
+  "source": {
+    "id": "demo_conflict_source_001",
+    "title": "Multimodal Algorithms & Physics Lecture",
+    "source_type": "video",
+    "duration": 360.0,
+    "channel": "VisionRAG-X Research Lab",
+    "status": "completed",
+    "metadata": {
+      "is_demo": true,
+      "fixture_scope": "conflict_demo",
+      "author": "VisionRAG-X",
+      "dataset_origin": "evaluation/benchmark/dataset.json"
+    }
+  },
+  "files": {
+    "knowledge_units": "knowledge_units.json",
+    "conflicts": "conflicts.json",
+    "vekg_edges": "vekg_edges.json",
+    "demo_test_plan": "demo_test_plan.json",
+    "readme": "README.md"
+  },
+  "expected_conflict_labels": {
+    "c_merge_sort": {
+      "conflict_id": "c_merge_sort",
+      "type": "complexity_disagreement",
+      "concept": "Merge Sort Time Complexity",
+      "sources": [
+        "asr",
+        "ocr"
+      ],
+      "claims": [
+        "O(n^2) [asr]",
+        "O(n log n) [ocr]"
+      ],
+      "severity": "high",
+      "confidence": 0.9,
+      "resolved": true,
+      "resolution": "Instructor corrected slip at 45.0s, confirming O(n log n)."
+    },
+    "c_kinetic_energy": {
+      "conflict_id": "c_kinetic_energy",
+      "type": "formula_contradiction",
+      "concept": "Kinetic Energy Formula",
+      "sources": [
+        "formula",
+        "asr"
+      ],
+      "claims": [
+        "KE = 0.5 * m * v^2 [formula]",
+        "KE = m * v^2 [asr]"
+      ],
+      "severity": "high",
+      "confidence": 0.85,
+      "resolved": true,
+      "resolution": "Slide formula KE = 0.5 * m * v^2 is authoritative; spoken omission of 0.5 is incorrect."
+    }
+  },
+  "vekg_edge_expectations": [
+    {
+      "source": "ku_03",
+      "target": "ku_02",
+      "relation": "corrects",
+      "description": "ku_03 (v2 verbal correction) corrects ku_02 (v1 verbal slip)"
+    },
+    {
+      "source": "ku_03",
+      "target": "ku_02",
+      "relation": "supersedes",
+      "description": "ku_03 supersedes ku_02 in active version resolution"
+    },
+    {
+      "source": "ku_08",
+      "target": "ku_09",
+      "relation": "conflicts_with",
+      "description": "Slide formula ku_08 conflicts with spoken formula ku_09"
+    },
+    {
+      "source": "ku_01",
+      "target": "ku_02",
+      "relation": "conflicts_with",
+      "description": "Slide complexity ku_01 conflicts with initial spoken slip ku_02"
+    },
+    {
+      "source": "ku_04",
+      "target": "ku_05",
+      "relation": "related_to",
+      "description": "Binary search algorithm code relates to its complexity analysis"
+    },
+    {
+      "source": "ku_10",
+      "target": "ku_11",
+      "relation": "related_to",
+      "description": "Gradient descent visual trajectory relates to its parameter update formula"
+    },
+    {
+      "source": "ku_12",
+      "target": "ku_13",
+      "relation": "related_to",
+      "description": "BFS queue relates to DFS stack graph traversal"
+    }
+  ],
+  "statistics": {
+    "total_units": 15,
+    "modalities": {
+      "asr": 4,
+      "ocr": 5,
+      "formula": 3,
+      "code": 1,
+      "vision": 2
+    },
+    "total_conflicts": 2,
+    "total_edges": 7,
+    "total_scenarios": 8
+  }
+}

@@ -44,6 +44,7 @@ export const getKnowledge = (sourceId) => api.get(`/knowledge/${sourceId}`)
 export const getKnowledgeUnitHistory = (kuId) => api.get(`/knowledge/unit/${kuId}/history`)
 export const getKnowledgeUnitEvidence = (kuId) => api.get(`/knowledge/unit/${kuId}/evidence`)
 export const getSourceConflicts = (sourceId) => api.get(`/source/${sourceId}/conflicts`)
+export const getAllConflicts = (sourceId = null) => api.get('/conflicts', { params: sourceId ? { source_id: sourceId } : {} })
 export const getSourceEvolution = (sourceId) => api.get(`/source/${sourceId}/evolution`)
 export const getKnowledgeGraph = (sourceId = null) =>
   api.get('/knowledge-graph', { params: sourceId ? { source_id: sourceId } : {} })

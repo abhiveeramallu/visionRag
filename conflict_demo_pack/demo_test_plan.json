@@ -1,0 +1,123 @@
+{
+  "plan_name": "VisionRAG-X Conflict Demo Verification & Regression Test Plan",
+  "version": "1.0.0",
+  "target_source_id": "demo_conflict_source_001",
+  "scenarios": [
+    {
+      "scenario_id": "SCENARIO_1",
+      "name": "Cross-Modal Disagreement Detection",
+      "description": "Evaluate detection of factual contradiction between formula slide (KE = 0.5 * m * v^2) and spoken narration (KE = m * v^2).",
+      "queries": [
+        "What is the formula for kinetic energy of a moving object?",
+        "Did the speaker and the slide disagree on kinetic energy?"
+      ],
+      "relevant_units": [
+        "ku_08",
+        "ku_09"
+      ],
+      "expected_conflict_type": "formula_contradiction",
+      "expected_claims": [
+        "KE = 0.5 * m * v^2",
+        "KE = m * v^2"
+      ],
+      "expected_resolution": "Slide formula KE = 0.5 * m * v^2 is authoritative; spoken omission of 0.5 is incorrect.",
+      "pass_criteria": "Conflict detector flags conflict; AI Chat displays conflict warning or comparison badge."
+    },
+    {
+      "scenario_id": "SCENARIO_2",
+      "name": "Correction and Supersession via VEKG",
+      "description": "Instructor makes a speech slip at 10s (O(n^2)) and verbally corrects it at 45s (O(n log n)). VEKG must mark v1 as superseded and direct answers to v2.",
+      "queries": [
+        "What is the time complexity of merge sort in the worst case?",
+        "What is the recurrence relation stated during the merge sort correction?"
+      ],
+      "relevant_units": [
+        "ku_01",
+        "ku_03"
+      ],
+      "superseded_units": [
+        "ku_02"
+      ],
+      "expected_active_answer": "O(n log n)",
+      "expected_vekg_edge": {
+        "source": "ku_03",
+        "target": "ku_02",
+        "relation": "corrects"
+      },
+      "pass_criteria": "Retrieved units prioritize active/verified units (ku_01, ku_03); ku_02 is suppressed or tagged superseded; answer does not output O(n^2)."
+    },
+    {
+      "scenario_id": "SCENARIO_3",
+      "name": "Non-Conflicting / Complementary Multimodal Evidence",
+      "description": "Ensure distinct modalities presenting non-contradictory aspects (e.g. BFS Queue in speech, DFS Stack on slide) do not trigger false conflict alerts.",
+      "queries": [
+        "Which data structure is used by Breadth First Search?",
+        "What data structure does Depth First Search utilize?",
+        "What is Newton's Second Law of Motion formula?",
+        "Why cannot Dijkstra's algorithm handle graphs with negative weights?"
+      ],
+      "relevant_units": [
+        "ku_12",
+        "ku_13",
+        "ku_07",
+        "ku_15"
+      ],
+      "pass_criteria": "No spurious conflict detected; zero false-positive conflict flags; accurate factual evidence retrieval."
+    },
+    {
+      "scenario_id": "SCENARIO_4",
+      "name": "Formula and Code Retrieval Specialization",
+      "description": "Validate that Python code syntax and mathematical formulas are accurately indexed, preserved, and retrieved without token mangling.",
+      "queries": [
+        "Show me the Python code implementation for binary search.",
+        "Explain how Master Theorem solves divide and conquer recurrences.",
+        "What is the parameter update equation in gradient descent?"
+      ],
+      "relevant_units": [
+        "ku_04",
+        "ku_06",
+        "ku_11"
+      ],
+      "pass_criteria": "Exact Python function signature and code structure retrieved for ku_04; mathematical symbols preserved in BM25/hybrid search."
+    },
+    {
+      "scenario_id": "SCENARIO_5",
+      "name": "Timestamp Provenance & Seekable Anchors",
+      "description": "Verify temporal grounding and seekable timestamp range extraction for lecture events.",
+      "queries": [
+        "At what timestamp does the instructor correct the mistake regarding merge sort?"
+      ],
+      "relevant_units": [
+        "ku_03"
+      ],
+      "expected_temporal_window": {
+        "start": 45.0,
+        "end": 52.0
+      },
+      "pass_criteria": "Retrieved evidence item has timestamp_start=45.0 and timestamp_end=52.0; formatted citation contains 45.0s-52.0s."
+    },
+    {
+      "scenario_id": "SCENARIO_6",
+      "name": "Unanswerable-Query Abstention (Sufficiency Gate)",
+      "description": "Verify that queries about topics absent from the lecture material trigger epistemic abstention without hallucinations.",
+      "queries": [
+        "What is the time complexity of quantum Fourier transform in Shor's algorithm?",
+        "How many protons are present in a caffeine molecule?"
+      ],
+      "relevant_units": [],
+      "pass_criteria": "Evidence sufficiency gate triggers; abstained=true; returned message indicates source material does not contain the answer."
+    },
+    {
+      "scenario_id": "SCENARIO_7",
+      "name": "Persistence After Service Restart",
+      "description": "Verify that stored KnowledgeUnits, Evidence items, and Conflict records survive server restart and the in-memory VEKG graph reconstructs completely.",
+      "pass_criteria": "After DB reload, VEKG.reconstruct_from_units() produces identical node count (15), edge types, and lineage links."
+    },
+    {
+      "scenario_id": "SCENARIO_8",
+      "name": "Source Isolation & Non-Interference",
+      "description": "Verify that demo fixture records are strictly scoped to demo_conflict_source_001 and never leak into production user sources or vice versa.",
+      "pass_criteria": "Queries with source_id=demo_conflict_source_001 return only demo units; queries with production source IDs return 0 demo units."
+    }
+  ]
+}

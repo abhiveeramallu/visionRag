@@ -16,6 +16,7 @@ import {
   BookOpen,
   AlertCircle,
   FileText,
+  Link2,
 } from 'lucide-react'
 import { getSources, getKnowledgeGraph } from '../services/api'
 import { mockKnowledgeGraph, formatTimestamp } from '../data/mockData'
@@ -175,20 +176,31 @@ function NodeDetail({ node, edges = [], allNodes = [], onClose }) {
         )}
 
         {conflicts.length > 0 && (
-          <div className="p-3 bg-rose-50/70 border border-rose-200 rounded-lg text-xs space-y-1">
+          <div className="p-3 bg-rose-50/70 border border-rose-200 rounded-lg text-xs space-y-2">
             <div className="flex items-center gap-1.5 font-bold text-rose-800">
               <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
               <span>Cross-Modal Conflict Detected</span>
             </div>
             {conflicts.map((c) => (
-              <div key={c.id} className="text-rose-700">
-                <p className="font-semibold">{c.conflict_type} (severity: {c.severity})</p>
+              <div key={c.id} className="text-rose-700 space-y-1 bg-white/70 p-2 rounded border border-rose-100">
+                <div className="flex items-center justify-between">
+                  <p className="font-semibold">{c.conflict_type || 'Disagreement'}</p>
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${c.resolved ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                    {c.resolved ? 'Resolved' : 'Disputed'}
+                  </span>
+                </div>
+                {c.severity && <p className="text-[10px] text-rose-600 uppercase font-semibold">Severity: {c.severity}</p>}
                 {c.claims && c.claims.length > 0 && (
-                  <ul className="list-disc list-inside mt-0.5 space-y-0.5">
+                  <ul className="list-disc list-inside mt-0.5 space-y-0.5 font-mono text-[11px]">
                     {c.claims.map((cl, i) => (
                       <li key={i}>{cl}</li>
                     ))}
                   </ul>
+                )}
+                {c.resolution && (
+                  <p className="text-[11px] text-ink-600 mt-1 pt-1 border-t border-rose-100">
+                    <strong>Resolution:</strong> {c.resolution}
+                  </p>
                 )}
               </div>
             ))}
@@ -341,15 +353,18 @@ export default function KnowledgeGraph() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4 text-xs font-medium text-ink-600">
+          <div className="flex items-center gap-4 text-xs font-medium text-ink-600 flex-wrap">
             <span>
               Nodes: <strong className="text-ink-900">{graphData.nodes?.length || 0}</strong>
             </span>
             <span>
-              Lineage Edges: <strong className="text-emerald-700">{graphData.summary?.correction_edges || 0}</strong>
+              Lineage Edges: <strong className="text-emerald-700">{graphData.summary?.lineage_edges ?? graphData.summary?.correction_edges ?? 0}</strong>
             </span>
             <span>
               Conflicts: <strong className="text-rose-700">{graphData.summary?.conflict_edges || 0}</strong>
+            </span>
+            <span>
+              Concept Links: <strong className="text-slate-700">{graphData.summary?.related_edges || 0}</strong>
             </span>
           </div>
         </div>
@@ -406,33 +421,134 @@ export default function KnowledgeGraph() {
         <div className="grid lg:grid-cols-[1.3fr_1fr] gap-6 items-start">
           {/* Graph Nodes & Relationship List */}
           <div className="space-y-4">
-            {/* Detected Lineage / Relationships Banner */}
+            {/* Relationship Categories: Lineages, Conflicts, Concept Links */}
             {graphData.edges && graphData.edges.length > 0 && (
-              <div className="card p-4 bg-gradient-to-r from-emerald-50/60 to-teal-50/60 border border-emerald-200">
-                <div className="flex items-center gap-2 text-emerald-800 font-bold text-xs uppercase tracking-wider mb-2">
-                  <Layers className="w-4 h-4 text-emerald-600" />
-                  <span>Detected Relationship Lineages ({graphData.edges.length})</span>
-                </div>
-                <div className="space-y-2">
-                  {graphData.edges.map((e) => (
-                    <div
-                      key={e.id}
-                      className="p-2.5 bg-white border border-emerald-100 rounded-lg text-xs flex items-start gap-2 shadow-sm"
-                    >
-                      <ArrowRight className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-ink-900">{e.source_label || 'Newer Version'}</span>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800">
-                            {e.label}
-                          </span>
-                          <span className="font-semibold text-ink-600 line-through">{e.target_label || 'Older Version'}</span>
-                        </div>
-                        {e.reason && <p className="text-[11px] text-ink-500">{e.reason}</p>}
-                      </div>
+              <div className="space-y-3">
+                {/* 1. Verified Version Lineages & Corrections */}
+                {graphData.edges.filter((e) => e.relation === 'corrects' || e.relation === 'supersedes').length > 0 && (
+                  <div className="card p-4 bg-gradient-to-r from-emerald-50/60 to-teal-50/60 border border-emerald-200">
+                    <div className="flex items-center gap-2 text-emerald-800 font-bold text-xs uppercase tracking-wider mb-2">
+                      <Layers className="w-4 h-4 text-emerald-600" />
+                      <span>
+                        Verified Version Lineages & Corrections (
+                        {graphData.edges.filter((e) => e.relation === 'corrects' || e.relation === 'supersedes').length})
+                      </span>
                     </div>
-                  ))}
-                </div>
+                    <div className="space-y-2">
+                      {graphData.edges
+                        .filter((e) => e.relation === 'corrects' || e.relation === 'supersedes')
+                        .map((e) => (
+                          <div
+                            key={e.id}
+                            className="p-2.5 bg-white border border-emerald-100 rounded-lg text-xs flex items-start gap-2 shadow-sm"
+                          >
+                            <ArrowRight className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-bold text-ink-900">{e.source_label || 'Verified Version'}</span>
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800">
+                                  {e.label}
+                                </span>
+                                <span className="font-semibold text-ink-600 line-through">
+                                  {e.target_label || 'Superseded Version'}
+                                </span>
+                              </div>
+                              {e.reason && <p className="text-[11px] text-ink-500">{e.reason}</p>}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. Cross-Modal Conflicts */}
+                {graphData.edges.filter((e) => e.relation === 'conflicts_with').length > 0 && (
+                  <div className="card p-4 bg-gradient-to-r from-rose-50/70 to-orange-50/70 border border-rose-200">
+                    <div className="flex items-center gap-2 text-rose-800 font-bold text-xs uppercase tracking-wider mb-2">
+                      <AlertTriangle className="w-4 h-4 text-rose-600" />
+                      <span>
+                        Detected Cross-Modal Conflicts (
+                        {graphData.edges.filter((e) => e.relation === 'conflicts_with').length})
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {graphData.edges
+                        .filter((e) => e.relation === 'conflicts_with')
+                        .map((e) => (
+                          <div
+                            key={e.id}
+                            className="p-2.5 bg-white border border-rose-100 rounded-lg text-xs space-y-1 shadow-sm"
+                          >
+                            <div className="flex items-center justify-between flex-wrap gap-1">
+                              <div className="flex items-center gap-1.5 font-bold text-ink-900">
+                                <span className="text-rose-700 font-semibold">{e.source_label}</span>
+                                {e.source !== e.target && (
+                                  <>
+                                    <span className="text-ink-400">&harr;</span>
+                                    <span className="text-rose-700 font-semibold">{e.target_label}</span>
+                                  </>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-rose-100 text-rose-800">
+                                  {e.conflict_type || 'Conflict'}
+                                </span>
+                                <span
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                    e.resolved ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                                  }`}
+                                >
+                                  {e.resolved ? 'Resolved' : 'Disputed'}
+                                </span>
+                              </div>
+                            </div>
+                            {e.claims && e.claims.length > 0 && (
+                              <ul className="list-disc list-inside text-[11px] text-ink-600 font-mono space-y-0.5">
+                                {e.claims.map((cl, i) => (
+                                  <li key={i}>{cl}</li>
+                                ))}
+                              </ul>
+                            )}
+                            {e.resolution && (
+                              <p className="text-[11px] text-ink-500 italic">Resolution: {e.resolution}</p>
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. Concept Topic Associations */}
+                {graphData.edges.filter((e) => e.relation === 'related_to').length > 0 && (
+                  <div className="card p-4 bg-slate-50/70 border border-slate-200">
+                    <div className="flex items-center gap-2 text-slate-700 font-bold text-xs uppercase tracking-wider mb-2">
+                      <Link2 className="w-4 h-4 text-slate-500" />
+                      <span>
+                        Concept Topic Associations (
+                        {graphData.edges.filter((e) => e.relation === 'related_to').length})
+                      </span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {graphData.edges
+                        .filter((e) => e.relation === 'related_to')
+                        .map((e) => (
+                          <div
+                            key={e.id}
+                            className="p-2 bg-white border border-slate-200 rounded-lg text-xs flex items-center justify-between shadow-sm"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-ink-800">{e.source_label}</span>
+                              <span className="text-ink-400">&bull;</span>
+                              <span className="font-semibold text-ink-800">{e.target_label}</span>
+                            </div>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600">
+                              {e.label}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

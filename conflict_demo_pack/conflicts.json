@@ -1,0 +1,49 @@
+[
+  {
+    "conflict_id": "c_merge_sort",
+    "type": "complexity_disagreement",
+    "concept": "Merge Sort Time Complexity",
+    "unit_ids": [
+      "ku_01",
+      "ku_02",
+      "ku_03"
+    ],
+    "sources": [
+      "asr",
+      "ocr"
+    ],
+    "claims": [
+      "O(n^2) [asr]",
+      "O(n log n) [ocr]"
+    ],
+    "timestamp": 12.0,
+    "severity": "high",
+    "confidence": 0.9,
+    "resolved": true,
+    "resolution": "Instructor corrected slip at 45.0s, confirming O(n log n).",
+    "source_id": "demo_conflict_source_001"
+  },
+  {
+    "conflict_id": "c_kinetic_energy",
+    "type": "formula_contradiction",
+    "concept": "Kinetic Energy Formula",
+    "unit_ids": [
+      "ku_08",
+      "ku_09"
+    ],
+    "sources": [
+      "formula",
+      "asr"
+    ],
+    "claims": [
+      "KE = 0.5 * m * v^2 [formula]",
+      "KE = m * v^2 [asr]"
+    ],
+    "timestamp": 142.0,
+    "severity": "high",
+    "confidence": 0.85,
+    "resolved": true,
+    "resolution": "Slide formula KE = 0.5 * m * v^2 is authoritative; spoken omission of 0.5 is incorrect.",
+    "source_id": "demo_conflict_source_001"
+  }
+]

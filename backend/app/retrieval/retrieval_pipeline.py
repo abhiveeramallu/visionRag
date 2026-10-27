@@ -123,7 +123,9 @@ class Retriever:
                     or r.get('payload', {}).get('modality')
                 )
                 if unit_mod == modality_filter:
-                    r['final_score'] = min(1.0, r.get('final_score', 0.0) * 1.35)
+                    r['final_score'] = min(1.0, r.get('final_score', 0.0) + 0.40)
+                else:
+                    r['final_score'] = r.get('final_score', 0.0) * 0.75
             results.sort(key=lambda r: r.get('final_score', 0.0), reverse=True)
 
         # 2. Timestamp & Temporal Location Matching

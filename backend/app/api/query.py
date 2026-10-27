@@ -1035,14 +1035,48 @@ async def get_source_conflicts(source_id: str, db: AsyncSession = Depends(get_db
     return [
         {
             'id': c.id,
+            'source_id': c.source_id,
             'conflict_type': c.conflict_type,
             'sources': c.modalities or [],
+            'modalities': c.modalities or [],
             'claims': c.claims or [],
             'timestamp': c.timestamp,
             'page': c.page,
             'severity': c.severity,
             'confidence': c.confidence,
             'resolved': c.resolved,
+            'resolution': c.resolution,
+        }
+        for c in items
+    ]
+
+
+@router.get('/api/conflicts')
+async def get_all_conflicts(
+    source_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """All detected cross-modal conflicts across all sources or filtered by source_id."""
+    query = select(Conflict)
+    if source_id:
+        query = query.where(Conflict.source_id == source_id)
+    query = query.order_by(Conflict.created_at.desc())
+    items = (await db.execute(query)).scalars().all()
+    return [
+        {
+            'id': c.id,
+            'source_id': c.source_id,
+            'conflict_type': c.conflict_type,
+            'sources': c.modalities or [],
+            'modalities': c.modalities or [],
+            'claims': c.claims or [],
+            'timestamp': c.timestamp,
+            'page': c.page,
+            'severity': c.severity,
+            'confidence': c.confidence,
+            'resolved': c.resolved,
+            'resolution': c.resolution,
+            'created_at': c.created_at.isoformat() if c.created_at else None,
         }
         for c in items
     ]
@@ -1182,6 +1216,14 @@ async def get_knowledge_graph(
                 elif c_ts is not None and u.timestamp_start is not None and abs(c_ts - u.timestamp_start) <= 30.0:
                     matched_uids.append(u.id)
 
+        # Fallback: if no page/ts match, match by claims keyword or concept
+        if not matched_uids and c.claims:
+            c_claims_lower = [str(cl).lower() for cl in c.claims]
+            for u in units:
+                if u.source_id == c.source_id:
+                    if any(cl in u.content.lower() or u.concept.lower() in cl for cl in c_claims_lower):
+                        matched_uids.append(u.id)
+
         if len(matched_uids) >= 2:
             u1, u2 = matched_uids[0], matched_uids[1]
             if (u1, u2) not in edge_seen and (u2, u1) not in edge_seen:
@@ -1196,8 +1238,39 @@ async def get_knowledge_graph(
                     'severity': c.severity,
                     'claims': c.claims or [],
                     'resolved': c.resolved,
+                    'resolution': c.resolution,
+                    'source_label': unit_map[u1].concept if u1 in unit_map else 'Claim A',
+                    'target_label': unit_map[u2].concept if u2 in unit_map else 'Claim B',
                 })
                 edge_seen.add((u1, u2))
+        elif len(matched_uids) == 1:
+            u1 = matched_uids[0]
+            u1_unit = unit_map.get(u1)
+            target_uid = u1
+            # Check if this unit was corrected by another unit (e.g. page 6 corrects page 2)
+            # or if another unit in the same source shares the concept
+            for other_u in units:
+                if other_u.source_id == c.source_id and other_u.id != u1:
+                    if other_u.previous_version_id == u1 or (u1_unit and other_u.concept.strip().lower() == u1_unit.concept.strip().lower()):
+                        target_uid = other_u.id
+                        break
+
+            edge_id = f'edge-conflict-{c.id}'
+            edges.append({
+                'id': edge_id,
+                'source': u1,
+                'target': target_uid,
+                'relation': 'conflicts_with',
+                'label': 'Cross-Modal Conflict' if target_uid == u1 else 'Conflicts With',
+                'conflict_type': c.conflict_type,
+                'severity': c.severity,
+                'claims': c.claims or [],
+                'resolved': c.resolved,
+                'resolution': c.resolution,
+                'source_label': unit_map[u1].concept if u1 in unit_map else 'Knowledge Unit',
+                'target_label': unit_map[target_uid].concept if target_uid in unit_map else 'Knowledge Unit',
+            })
+            edge_seen.add((u1, target_uid))
 
     # 3. Same-concept / topic associations (across distinct versions or pages)
     concept_groups = {}
@@ -1216,6 +1289,8 @@ async def get_knowledge_graph(
                         'target': u_b,
                         'relation': 'related_to',
                         'label': 'Related Concept',
+                        'source_label': unit_map[u_a].concept if u_a in unit_map else 'Concept A',
+                        'target_label': unit_map[u_b].concept if u_b in unit_map else 'Concept B',
                     })
                     edge_seen.add((u_a, u_b))
 
@@ -1226,8 +1301,11 @@ async def get_knowledge_graph(
             'total_nodes': len(nodes),
             'total_edges': len(edges),
             'sources': len(source_ids),
+            'lineage_edges': sum(1 for e in edges if e['relation'] in ('corrects', 'supersedes')),
             'correction_edges': sum(1 for e in edges if e['relation'] in ('corrects', 'supersedes')),
             'conflict_edges': sum(1 for e in edges if e['relation'] == 'conflicts_with'),
+            'related_edges': sum(1 for e in edges if e['relation'] == 'related_to'),
+            'conflicts_count': len(conflicts),
         },
     }
 

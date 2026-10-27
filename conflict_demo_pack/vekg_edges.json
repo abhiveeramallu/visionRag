@@ -1,0 +1,65 @@
+[
+  {
+    "edge_id": "edge_corr_merge_sort",
+    "source_unit_id": "ku_03",
+    "target_unit_id": "ku_02",
+    "relation": "corrects",
+    "reason": "Verbal correction by instructor correcting prior slip",
+    "direction": "directed",
+    "confidence": 0.95
+  },
+  {
+    "edge_id": "edge_super_merge_sort",
+    "source_unit_id": "ku_03",
+    "target_unit_id": "ku_02",
+    "relation": "supersedes",
+    "reason": "Version 2 replaces Version 1",
+    "direction": "directed",
+    "confidence": 0.95
+  },
+  {
+    "edge_id": "edge_conf_kinetic_energy",
+    "source_unit_id": "ku_08",
+    "target_unit_id": "ku_09",
+    "relation": "conflicts_with",
+    "reason": "Formula vs speech contradiction: 0.5 factor omitted in speech",
+    "direction": "undirected",
+    "confidence": 0.85
+  },
+  {
+    "edge_id": "edge_conf_merge_sort_slip",
+    "source_unit_id": "ku_01",
+    "target_unit_id": "ku_02",
+    "relation": "conflicts_with",
+    "reason": "OCR slide O(n log n) contradicts initial ASR slip O(n^2)",
+    "direction": "undirected",
+    "confidence": 0.9
+  },
+  {
+    "edge_id": "edge_rel_binary_search",
+    "source_unit_id": "ku_04",
+    "target_unit_id": "ku_05",
+    "relation": "related_to",
+    "reason": "Binary search algorithm code implementation and complexity analysis",
+    "direction": "undirected",
+    "confidence": 0.9
+  },
+  {
+    "edge_id": "edge_rel_gradient_descent",
+    "source_unit_id": "ku_10",
+    "target_unit_id": "ku_11",
+    "relation": "related_to",
+    "reason": "Gradient descent learning rate visual trajectory and parameter update equation",
+    "direction": "undirected",
+    "confidence": 0.92
+  },
+  {
+    "edge_id": "edge_rel_graph_search",
+    "source_unit_id": "ku_12",
+    "target_unit_id": "ku_13",
+    "relation": "related_to",
+    "reason": "Complementary graph traversal techniques: BFS (Queue) and DFS (Stack)",
+    "direction": "undirected",
+    "confidence": 0.88
+  }
+]

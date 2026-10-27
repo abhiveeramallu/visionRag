@@ -18,14 +18,15 @@ _STOP_WORDS = {
 
 
 def _tokenize(text: str) -> List[str]:
-    """Lowercase, split on non-word chars, remove stop words, preserving technical symbols."""
-    tokens = re.split(r'\W+', text.lower())
+    """Lowercase, split on non-word chars and underscores, remove stop words, preserving technical symbols."""
+    raw_tokens = re.split(r'[\W_]+', text.lower())
     # Preserve single-letter technical variables (e.g. n in O(n), v, m, c, k, x, y)
     valid_single_letters = {'n', 'v', 'm', 'c', 'k', 'x', 'y', 'o', 'a', 'b'}
-    return [
-        t for t in tokens
+    tokens = [
+        t for t in raw_tokens
         if t and t not in _STOP_WORDS and (len(t) > 1 or t in valid_single_letters)
     ]
+    return tokens
 
 
 class LexicalIndex:

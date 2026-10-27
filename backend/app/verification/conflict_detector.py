@@ -118,12 +118,67 @@ class ConflictDetector:
         comp_b = self._extract_complexity(text_b)
         if not comp_a or not comp_b:
             return None
+
+        # 1. Scope / Assumption Check
+        # Distinguish genuine contradictions from compatible statements describing different data structures or cases
+        SCOPE_ASSUMPTION_PAIRS = [
+            ("balanced", "unbalanced"),
+            ("avl", "unbalanced"),
+            ("red-black", "unbalanced"),
+            ("red black", "unbalanced"),
+            ("skewed", "balanced"),
+            ("degenerate", "balanced"),
+            ("worst case", "average case"),
+            ("worst case", "best case"),
+            ("average case", "best case"),
+            ("worst-case", "average-case"),
+            ("worst-case", "best-case"),
+            ("average-case", "best-case"),
+            ("time", "space"),
+            ("height", "search"),
+            ("height", "traversal"),
+            ("search", "insert"),
+            ("search", "delete"),
+            ("insert", "delete"),
+            ("sorted", "unsorted"),
+            ("sparse", "dense"),
+            ("directed", "undirected"),
+            ("acyclic", "cyclic"),
+        ]
+        text_a_lower = text_a.lower()
+        text_b_lower = text_b.lower()
+        def _has_phrase(phrase: str, text: str) -> bool:
+            return bool(re.search(r'\b' + re.escape(phrase) + r'\b', text, re.IGNORECASE))
+
+        for term1, term2 in SCOPE_ASSUMPTION_PAIRS:
+            if (_has_phrase(term1, text_a_lower) and _has_phrase(term2, text_b_lower)) or \
+               (_has_phrase(term2, text_a_lower) and _has_phrase(term1, text_b_lower)):
+                logger.debug(
+                    "Complexity statements differ due to scope/assumptions (%s vs %s); compatible statement, not a conflict.",
+                    term1, term2
+                )
+                return None
+
         # Compare normalised forms — prevents O(n) vs O(n^2) false-negatives
         # where the shorter string is a prefix of the longer one.
         for ca in comp_a:
             for cb in comp_b:
                 if ca != cb:
                     severity = self._calculate_severity('complexity_disagreement', 0.9)
+                    
+                    # Check for classic BST search complexity contradiction:
+                    # Unbalanced BST worst-case search claiming O(log n) vs O(n)
+                    is_bst_search = any(w in text_a_lower or w in text_b_lower for w in ("bst", "binary search tree"))
+                    resolution = None
+                    resolved = False
+                    if is_bst_search and (("logn" in ca and "n" == cb) or ("logn" in cb and "n" == ca)):
+                        if "unbalanced" in text_a_lower or "unbalanced" in text_b_lower:
+                            resolved = True
+                            resolution = (
+                                "An unbalanced BST degenerates to a linear chain in the worst case yielding O(n) search; "
+                                "balanced BSTs (e.g. AVL, Red-Black) maintain O(log n) search complexity."
+                            )
+
                     return {
                         'type': 'complexity_disagreement',
                         'sources': [modality_a, modality_b],
@@ -133,6 +188,8 @@ class ConflictDetector:
                         ],
                         'severity': severity,
                         'confidence': 0.85,
+                        'resolved': resolved,
+                        'resolution': resolution,
                         **context,
                     }
         return None
@@ -193,6 +250,21 @@ class ConflictDetector:
         if not eqs_a or not eqs_b:
             return None
 
+        MATH_STOPWORDS = {
+            'where', 'when', 'for', 'with', 'without', 'in', 'at', 'as', 'is', 'the', 'and', 'which', 'because'
+        }
+
+        def _clean_rhs_math(raw: str) -> str:
+            tokens = raw.split()
+            math_tokens = []
+            for t in tokens:
+                clean_word = t.strip(".,;:!?()").lower()
+                if len(clean_word) > 1 and clean_word in MATH_STOPWORDS:
+                    break
+                math_tokens.append(t)
+            cleaned = " ".join(math_tokens).rstrip(".,;:!?")
+            return cleaned if cleaned else raw.rstrip(".,;:!?")
+
         # Unit factors to base SI
         UNIT_FACTORS = {
             'm/s': 1.0,
@@ -226,10 +298,12 @@ class ConflictDetector:
             for lhs in common_lhs:
                 raw_rhs_a = eqs_a[lhs]
                 raw_rhs_b = eqs_b[lhs]
+                clean_rhs_a = _clean_rhs_math(raw_rhs_a)
+                clean_rhs_b = _clean_rhs_math(raw_rhs_b)
 
                 # 2. Check Unit Equivalence
-                unit_a = parse_unit_val(raw_rhs_a)
-                unit_b = parse_unit_val(raw_rhs_b)
+                unit_a = parse_unit_val(clean_rhs_a)
+                unit_b = parse_unit_val(clean_rhs_b)
                 if unit_a is not None and unit_b is not None:
                     if abs(unit_a - unit_b) < 1e-4:
                         # Equivalent under unit conversion
@@ -240,12 +314,12 @@ class ConflictDetector:
                             'type': 'formula_contradiction',
                             'sources': [modality_a, modality_b],
                             'claims': [
-                                f'{lhs} = {raw_rhs_a} [{modality_a}]',
-                                f'{lhs} = {raw_rhs_b} [{modality_b}]',
+                                f'{lhs} = {clean_rhs_a} [{modality_a}]',
+                                f'{lhs} = {clean_rhs_b} [{modality_b}]',
                             ],
                             'severity': severity,
                             'confidence': 0.85,
-                            'candidate_rationale': f'Unit mismatch: {raw_rhs_a} vs {raw_rhs_b}',
+                            'candidate_rationale': f'Unit mismatch: {clean_rhs_a} vs {clean_rhs_b}',
                             **context,
                         }
 
@@ -260,8 +334,8 @@ class ConflictDetector:
                         implicit_multiplication_application,
                     )
                     trans = standard_transformations + (implicit_multiplication_application,)
-                    norm_a = raw_rhs_a.replace('^', '**').replace('²', '**2').replace('³', '**3').replace('·', '*').replace('×', '*')
-                    norm_b = raw_rhs_b.replace('^', '**').replace('²', '**2').replace('³', '**3').replace('·', '*').replace('×', '*')
+                    norm_a = clean_rhs_a.replace('^', '**').replace('²', '**2').replace('³', '**3').replace('·', '*').replace('×', '*')
+                    norm_b = clean_rhs_b.replace('^', '**').replace('²', '**2').replace('³', '**3').replace('·', '*').replace('×', '*')
 
                     expr_a = parse_expr(norm_a, transformations=trans)
                     expr_b = parse_expr(norm_b, transformations=trans)
@@ -271,7 +345,7 @@ class ConflictDetector:
                     else:
                         is_symbolically_diff = True
                 except Exception as e:
-                    logger.debug("SymPy could not parse formula RHS (%s vs %s): %s", raw_rhs_a, raw_rhs_b, e)
+                    logger.debug("SymPy could not parse formula RHS (%s vs %s): %s", clean_rhs_a, clean_rhs_b, e)
 
                 if is_symbolically_equiv:
                     continue
@@ -282,8 +356,8 @@ class ConflictDetector:
                         'type': 'formula_contradiction',
                         'sources': [modality_a, modality_b],
                         'claims': [
-                            f'{lhs} = {raw_rhs_a} [{modality_a}]',
-                            f'{lhs} = {raw_rhs_b} [{modality_b}]',
+                            f'{lhs} = {clean_rhs_a} [{modality_a}]',
+                            f'{lhs} = {clean_rhs_b} [{modality_b}]',
                         ],
                         'severity': severity,
                         'confidence': 0.85,
@@ -455,6 +529,74 @@ class ConflictDetector:
             len(windows),
         )
         return all_conflicts
+
+    def detect_between_claims(
+        self,
+        text_a: str,
+        text_b: str,
+        modality_a: str = "text",
+        modality_b: str = "text",
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Detect conflicts directly between two arbitrary claims or statements.
+
+        Can be used across different modalities, different timestamps, or different sources.
+        """
+        if not self.enabled or not text_a or not text_b:
+            return None
+
+        ctx = context or {}
+
+        # 1. Structural checks
+        for check_fn in (
+            self._detect_complexity_conflict,
+            self._detect_formula_contradiction,
+            self._detect_numeric_conflict,
+        ):
+            conflict = check_fn(text_a, text_b, modality_a, modality_b, ctx)
+            if conflict:
+                return conflict
+
+        # 2. Semantic / factual checks
+        if self._text_similarity(text_a, text_b) > 0.85:
+            return None
+
+        return self._detect_factual_contradiction(text_a, text_b, modality_a, modality_b, ctx)
+
+    def detect_between_units(
+        self,
+        unit_a: Any,
+        unit_b: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Compare two Knowledge Units (can be from different sources or pages)
+        and determine whether they present contradictory claims on the same topic.
+        """
+        if not self.enabled:
+            return None
+
+        # Extract text and modalities
+        text_a = getattr(unit_a, 'content', '') or ''
+        text_b = getattr(unit_b, 'content', '') or ''
+        mod_a = getattr(unit_a, 'modality', 'text') or 'text'
+        mod_b = getattr(unit_b, 'modality', 'text') or 'text'
+        id_a = getattr(unit_a, 'id', str(unit_a))
+        id_b = getattr(unit_b, 'id', str(unit_b))
+        src_a = getattr(unit_a, 'source_id', None)
+        src_b = getattr(unit_b, 'source_id', None)
+
+        context = {
+            'unit_ids': [id_a, id_b],
+            'source_id': src_a,
+            'source_id_b': src_b,
+            'is_cross_source': src_a != src_b,
+        }
+
+        conflict = self.detect_between_claims(text_a, text_b, mod_a, mod_b, context)
+        if conflict:
+            conflict['unit_ids'] = [id_a, id_b]
+        return conflict
 
     # ------------------------------------------------------------------
     # LLM-assisted conflict verification

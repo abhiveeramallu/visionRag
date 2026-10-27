@@ -143,7 +143,11 @@ class VEKG:
                 prev_id = u.previous_version_id
                 if prev_id in self._unit_index:
                     old_unit = self._unit_index[prev_id]
-                    relation = EDGE_CORRECTS if (u.correction_reason or old_unit.status == "superseded") else EDGE_SUPERSEDES
+                    is_correction = bool(u.correction_reason or old_unit.status == "superseded" or u.status == "verified")
+                    if is_correction and old_unit.status != "superseded":
+                        old_unit.status = "superseded"
+                        self.graph.nodes[prev_id]["status"] = "superseded"
+                    relation = EDGE_CORRECTS if is_correction else EDGE_SUPERSEDES
                     if not self.graph.has_edge(u.id, prev_id):
                         self.graph.add_edge(
                             u.id,
@@ -185,8 +189,8 @@ class VEKG:
                 for uid, u in self._unit_index.items():
                     ts_match = (c_ts is not None and u.timestamp_start is not None and abs(c_ts - u.timestamp_start) <= 30.0)
                     page_match = (c_page is not None and (u.page == c_page or u.slide == c_page))
-                    modality_match = u.modality in c_modalities
-                    claim_match = any(cl in u.content.lower() or u.concept.lower() in cl for cl in c_claims)
+                    modality_match = (not c_modalities) or (u.modality in c_modalities)
+                    claim_match = (not c_claims) or any(cl in u.content.lower() or u.concept.lower() in cl for cl in c_claims)
                     if (ts_match or page_match) and (modality_match or claim_match):
                         candidate_units.append(u)
 
@@ -194,6 +198,16 @@ class VEKG:
                     u_a = candidate_units[0]
                     u_b = candidate_units[1]
                     self.add_conflict(u_a.id, u_b.id, {
+                        "conflict_type": c.get("conflict_type") or c.get("type", "unknown"),
+                        "severity": c.get("severity", "medium"),
+                        "confidence": c.get("confidence", 0.5),
+                        "claims": c.get("claims", []),
+                        "resolved": bool(c.get("resolved", False)),
+                        "resolution": c.get("resolution"),
+                    })
+                elif len(candidate_units) == 1:
+                    u_a = candidate_units[0]
+                    self.add_conflict(u_a.id, u_a.id, {
                         "conflict_type": c.get("conflict_type") or c.get("type", "unknown"),
                         "severity": c.get("severity", "medium"),
                         "confidence": c.get("confidence", 0.5),
@@ -216,8 +230,15 @@ class VEKG:
         """
         for uid in (unit_id_a, unit_id_b):
             if uid in self._unit_index:
-                self._unit_index[uid].status = "disputed"
-                self.graph.nodes[uid]["status"] = "disputed"
+                # If conflict is resolved, do not downgrade superseded or verified terminal statuses
+                if conflict_info.get("resolved"):
+                    if self._unit_index[uid].status not in ("superseded", "verified"):
+                        self._unit_index[uid].status = "disputed"
+                        self.graph.nodes[uid]["status"] = "disputed"
+                else:
+                    # Unresolved conflict marks units as disputed
+                    self._unit_index[uid].status = "disputed"
+                    self.graph.nodes[uid]["status"] = "disputed"
 
         self.graph.add_edge(unit_id_a, unit_id_b, relation=EDGE_CONFLICTS_WITH, **conflict_info)
         self.graph.add_edge(unit_id_b, unit_id_a, relation=EDGE_CONFLICTS_WITH, **conflict_info)
